@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Math Rush</title>
+<link rel="stylesheet" href="../shared/kit.css">
+<style>
+  body { flex-direction: column; }
+  .box { width: min(92vw, 520px); display: flex; flex-direction: column; gap: 16px; align-items: stretch; }
+  .top { display: flex; justify-content: space-between; gap: 10px; }
+  .timebar { height: 10px; background: #1b2246; border-radius: 6px; overflow: hidden; }
+  .timebar div { height: 100%; width: 100%; background: linear-gradient(90deg, #22c55e, #facc15); transition: width .2s linear; }
+  .timebar.low div { background: #ef4444; }
+  #q {
+    background: #161c38; border-radius: 20px; padding: 28px 10px; text-align: center; font-size: clamp(40px, 11vw, 72px); font-weight: 900;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, .35); transition: transform .12s;
+  }
+  #q.good { transform: scale(1.04); box-shadow: 0 0 0 4px #22c55e; }
+  #q.bad { animation: shake .35s; box-shadow: 0 0 0 4px #ef4444; }
+  @keyframes shake { 25% { transform: translateX(-10px); } 75% { transform: translateX(10px); } }
+  #answers { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  #answers button {
+    border: 0; border-radius: 16px; padding: 20px 0; font: inherit; font-size: clamp(24px, 7vw, 36px); font-weight: 800; color: #fff; cursor: pointer;
+    box-shadow: 0 5px 0 rgba(0, 0, 0, .35); position: relative;
+  }
+  #answers button:active { transform: translateY(3px); box-shadow: 0 2px 0 rgba(0, 0, 0, .35); }
+  #answers button small { position: absolute; left: 10px; top: 6px; font-size: 12px; opacity: .6; }
+  #answers button:nth-child(1) { background: #3b82f6; } #answers button:nth-child(2) { background: #a855f7; }
+  #answers button:nth-child(3) { background: #f97316; } #answers button:nth-child(4) { background: #14b8a6; }
+  #msg { text-align: center; color: #9aa3d6; min-height: 20px; font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="box">
+  <div class="top">
+    <div class="kit-stat">Score<b id="score">0</b></div>
+    <div class="kit-stat">Streak<b id="streak">0</b></div>
+    <div class="kit-stat">Time<b id="time">60</b></div>
+    <div class="kit-stat">Best<b id="best">0</b></div>
+  </div>
+  <div class="timebar" id="bar"><div id="fill"></div></div>
+  <div id="q">?</div>
+  <div id="answers"></div>
+  <div id="msg">Correct answers add 1 second · wrong ones cost 3</div>
+</div>
+<script src="../shared/kit.js"></script>
+<script>
+(() => {
+  const ID = 'math-rush', ROUND = 60;
+  const $ = (id) => document.getElementById(id);
+  let score, streak, timeLeft, correct, wrong, answer, playing = false, best = Kit.getBest(ID), tick;
+  const btns = [];
+  for (let i = 0; i < 4; i++) {
+    const b = document.createElement('button');
+    b.addEventListener('click', () => choose(i));
+    $('answers').appendChild(b);
+    btns.push(b);
+  }
+
+  function makeQuestion() {
+    const lvl = Math.min(5, 1 + Math.floor(correct / 6));
+    const ops = lvl === 1 ? ['+', '−'] : lvl === 2 ? ['+', '−', '×'] : ['+', '−', '×', '÷'];
+    const op = Kit.pick(ops);
+    let a, b, ans;
+    const big = [10, 20, 50, 100, 200, 500][lvl];
+    if (op === '+') { a = Kit.randInt(1, big); b = Kit.randInt(1, big); ans = a + b; }
+    if (op === '−') { a = Kit.randInt(2, big); b = Kit.randInt(1, a); ans = a - b; }
+    if (op === '×') { const m = lvl < 3 ? 5 : lvl < 4 ? 10 : 12; a = Kit.randInt(2, m); b = Kit.randInt(2, m + (lvl > 4 ? 8 : 0)); ans = a * b; }
+    if (op === '÷') { b = Kit.randInt(2, lvl < 4 ? 9 : 12); ans = Kit.randInt(2, lvl < 4 ? 10 : 15); a = b * ans; }
+    const opts = new Set([ans]);
+    while (opts.size < 4) {
+      const spread = Math.max(3, Math.round(Math.abs(ans) * 0.2));
+      const w = ans + Kit.pick([-1, 1]) * Kit.randInt(1, spread);
+      if (w >= 0) opts.add(w);
+    }
+    answer = ans;
+    $('q').textContent = `${a} ${op} ${b}`;
+    Kit.shuffle([...opts]).forEach((v, i) => { btns[i].innerHTML = `<small>${i + 1}</small>${v}`; btns[i].dataset.v = v; });
+  }
+
+  function choose(i) {
+    if (!playing || Kit.overlayOpen) return;
+    const ok = +btns[i].dataset.v === answer;
+    const q = $('q');
+    q.classList.remove('good', 'bad'); void q.offsetWidth;
+    if (ok) {
+      correct++; streak++;
+      score += 10 + Math.min(streak, 10) * 2;
+      timeLeft = Math.min(ROUND, timeLeft + 1);
+      q.classList.add('good');
+      Kit.beep(600 + Math.min(streak, 12) * 40, 0.08, 'triangle', 0.05);
+      $('msg').textContent = streak >= 3 ? `🔥 ${streak} in a row!` : 'Correct!';
+    } else {
+      wrong++; streak = 0;
+      timeLeft -= 3;
+      q.classList.add('bad');
+      Kit.beep(160, 0.2, 'sawtooth', 0.04);
+      $('msg').textContent = 'Oops — it was ' + answer;
+    }
+    stats();
+    if (timeLeft <= 0) return end();
+    makeQuestion();
+  }
+
+  function stats() {
+    $('score').textContent = score; $('streak').textContent = streak; $('best').textContent = Math.max(best, score);
+    $('time').textContent = Math.max(0, Math.ceil(timeLeft));
+    $('fill').style.width = Math.max(0, (timeLeft / ROUND) * 100) + '%';
+    $('bar').classList.toggle('low', timeLeft < 10);
+  }
+  function start() {
+    score = 0; streak = 0; timeLeft = ROUND; correct = 0; wrong = 0; playing = true;
+    $('msg').textContent = 'Go!';
+    makeQuestion(); stats();
+    clearInterval(tick);
+    tick = setInterval(() => {
+      if (!playing || Kit.overlayOpen) return;
+      timeLeft -= 0.1;
+      stats();
+      if (timeLeft <= 0) end();
+    }, 100);
+  }
+  function end() {
+    playing = false; clearInterval(tick); timeLeft = 0; stats();
+    const rec = Kit.submitBest(ID, score);
+    best = Kit.getBest(ID);
+    const acc = correct + wrong ? Math.round((correct / (correct + wrong)) * 100) : 0;
+    Kit.beep(523, 0.15, 'triangle', 0.05); setTimeout(() => Kit.beep(392, 0.3, 'triangle', 0.05), 150);
+    Kit.overlay({
+      title: "Time's up!",
+      html: `<div class="big">${score}</div><p>${correct} correct · ${acc}% accuracy</p><p>${rec ? '<span class="gold">New best score!</span>' : 'Best: ' + best}</p>`,
+      buttons: [{ label: 'Play again', onClick: start }]
+    });
+  }
+
+  window.addEventListener('keydown', (e) => {
+    const m = /^(Digit|Numpad)([1-4])$/.exec(e.code);
+    if (m) choose(+m[2] - 1);
+  });
+  $('best').textContent = best;
+  Kit.overlay({
+    title: 'Math Rush',
+    html: `<p>Answer as many sums as you can in ${ROUND} seconds! The questions get harder as you go. Build a streak for bonus points.</p>`,
+    buttons: [{ label: 'Start', onClick: start }],
+    keys: 'Tap an answer or press <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd>'
+  });
+})();
+</script>
+</body>
+</html>

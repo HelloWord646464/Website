@@ -1,0 +1,153 @@
+/* Shared styles for every game page */
+* { box-sizing: border-box; }
+html, body {
+  margin: 0;
+  height: 100%;
+  background: #0e1325;
+  color: #eef1ff;
+  font-family: "Segoe UI", system-ui, -apple-system, Roboto, Helvetica, Arial, sans-serif;
+  overflow: hidden;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: none;
+}
+canvas {
+  display: block;
+  border-radius: 10px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, .45);
+}
+
+/* Start / pause / game-over card */
+.kit-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(8, 10, 24, .6);
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
+  z-index: 50;
+  transition: opacity .18s;
+  padding: 12px;
+}
+.kit-overlay.hidden { opacity: 0; pointer-events: none; }
+.kit-card {
+  background: #161c38;
+  border: 1px solid rgba(255, 255, 255, .09);
+  border-radius: 18px;
+  padding: 24px 28px;
+  text-align: center;
+  width: min(92vw, 400px);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, .5);
+  animation: kit-pop .22s ease-out;
+}
+@keyframes kit-pop { from { transform: scale(.92); opacity: 0; } to { transform: none; opacity: 1; } }
+.kit-card h1 { margin: 0 0 6px; font-size: 28px; letter-spacing: .3px; }
+.kit-card p { margin: 6px 0; color: #b8c0e6; line-height: 1.45; font-size: 15px; }
+.kit-card .big { font-size: 44px; font-weight: 800; color: #fff; margin: 6px 0; line-height: 1.1; }
+.kit-card .gold { color: #ffd257; font-weight: 700; }
+.kit-btns { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin-top: 16px; }
+.kit-btn {
+  appearance: none;
+  border: 0;
+  border-radius: 12px;
+  padding: 12px 22px;
+  font: inherit;
+  font-size: 16px;
+  font-weight: 700;
+  cursor: pointer;
+  color: #fff;
+  background: linear-gradient(180deg, #8a6dff, #5b3df5);
+  box-shadow: 0 5px 0 #3b25b0;
+  transition: transform .08s, box-shadow .08s;
+}
+.kit-btn:hover { filter: brightness(1.08); }
+.kit-btn:active { transform: translateY(3px); box-shadow: 0 2px 0 #3b25b0; }
+.kit-btn.alt { background: #2a3363; box-shadow: 0 5px 0 #1a2045; }
+.kit-btn.alt:active { box-shadow: 0 2px 0 #1a2045; }
+.kit-keys { font-size: 13px; color: #8d96c7; margin-top: 14px; line-height: 1.7; }
+kbd {
+  display: inline-block;
+  min-width: 22px;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: #252d57;
+  border-bottom: 2px solid #12173a;
+  color: #dfe4ff;
+  font: 600 12px/18px inherit;
+  font-family: inherit;
+}
+
+/* Generic DOM-based game layout helpers */
+.kit-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  max-width: 100%;
+  max-height: 100%;
+  padding: 12px;
+}
+.kit-bar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+.kit-stat {
+  background: #1b2246;
+  border-radius: 10px;
+  padding: 6px 14px;
+  min-width: 72px;
+  text-align: center;
+  font-size: 12px;
+  color: #9aa3d6;
+  text-transform: uppercase;
+  letter-spacing: .6px;
+}
+.kit-stat b { display: block; font-size: 20px; color: #fff; letter-spacing: 0; }
+.kit-select, .kit-small {
+  appearance: none;
+  border: 0;
+  border-radius: 10px;
+  padding: 9px 14px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  color: #e9ecff;
+  background: #2a3363;
+  cursor: pointer;
+}
+.kit-small:hover, .kit-select:hover { background: #343e78; }
+.kit-small.on { background: #5b3df5; }
+
+/* On-screen touch buttons */
+.kit-touch {
+  position: fixed;
+  bottom: 14px;
+  display: flex;
+  gap: 12px;
+  z-index: 20;
+}
+.kit-touch.left { left: 14px; }
+.kit-touch.right { right: 14px; }
+.kit-touch button {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, .25);
+  background: rgba(255, 255, 255, .1);
+  color: #fff;
+  font-size: 24px;
+  font-weight: 700;
+  touch-action: none;
+}
+.kit-touch button.active { background: rgba(255, 255, 255, .3); }

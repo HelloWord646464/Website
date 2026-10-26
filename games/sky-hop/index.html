@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Sky Hop</title>
+<link rel="stylesheet" href="../shared/kit.css">
+</head>
+<body>
+<script src="../shared/kit.js"></script>
+<script>
+(() => {
+  const ID = 'sky-hop', W = 400, H = 640, GROUND = 92, PW = 68;
+  const view = Kit.canvas(W, H), ctx = view.ctx;
+  const GRAV = 1500, FLAP = -430, SPEED = 170, SPACING = 230;
+  const parts = new Kit.Particles();
+  const clouds = [...Array(6)].map(() => ({ x: Kit.rand(0, W), y: Kit.rand(40, 300), s: Kit.rand(0.6, 1.3) }));
+  const city = [...Array(14)].map((_, i) => ({ x: i * 34, h: Kit.rand(40, 120), w: Kit.rand(26, 40) }));
+  let bird, pipes, score, state = 'menu', best = Kit.getBest(ID), groundX = 0, t = 0, flash = 0;
+
+  function reset() {
+    bird = { x: 110, y: H / 2 - 40, vy: 0, r: 15, wing: 0 };
+    pipes = []; score = 0; parts.clear();
+  }
+  function gap() { return Math.max(138, 170 - score * 1.2); }
+  function addPipe(x) {
+    const g = gap(), minC = 70 + g / 2, maxC = H - GROUND - 70 - g / 2;
+    pipes.push({ x, c: Kit.rand(minC, maxC), g, passed: false });
+  }
+
+  function flap() {
+    if (Kit.overlayOpen) return;
+    if (state === 'ready') { state = 'play'; addPipe(W + 60); }
+    if (state !== 'play') return;
+    bird.vy = FLAP;
+    bird.wing = 1;
+    Kit.beep(520, 0.07, 'triangle', 0.04, 260);
+  }
+
+  function die() {
+    if (state !== 'play') return;
+    state = 'dead'; flash = 1;
+    Kit.noise(0.25, 0.1); Kit.beep(180, 0.3, 'sawtooth', 0.04, -100);
+    parts.burst(bird.x, bird.y, 18, ['#ffd257', '#fff', '#f97316'], 200, 0.6, 4);
+  }
+
+  function gameOver() {
+    state = 'over';
+    const rec = Kit.submitBest(ID, score);
+    best = Kit.getBest(ID);
+    const medal = score >= 40 ? '🥇 Gold medal' : score >= 20 ? '🥈 Silver medal' : score >= 10 ? '🥉 Bronze medal' : '';
+    Kit.overlay({
+      title: 'Game Over',
+      html: `<div class="big">${score}</div>${medal ? `<p class="gold">${medal}</p>` : ''}<p>${rec ? '<span class="gold">New best score!</span>' : 'Best: ' + best}</p>`,
+      buttons: [{ label: 'Play again', onClick: () => { reset(); state = 'ready'; } }]
+    });
+  }
+
+  function hits(p) {
+    const b = bird, top = p.c - p.g / 2, bot = p.c + p.g / 2;
+    for (const [ry0, ry1] of [[-100, top], [bot, H]]) {
+      const cx = Kit.clamp(b.x, p.x, p.x + PW), cy = Kit.clamp(b.y, ry0, ry1);
+      if ((b.x - cx) ** 2 + (b.y - cy) ** 2 < (b.r - 2) ** 2) return true;
+    }
+    return false;
+  }
+
+  function update(dt) {
+    t += dt;
+    parts.update(dt);
+    flash = Math.max(0, flash - dt * 3);
+    const moving = state === 'ready' || state === 'play' || state === 'menu';
+    if (moving) {
+      groundX = (groundX - SPEED * dt) % 24;
+      for (const c of clouds) { c.x -= 12 * c.s * dt; if (c.x < -80) { c.x = W + 60; c.y = Kit.rand(40, 300); } }
+      for (const b of city) { b.x -= 30 * dt; if (b.x < -50) b.x += 14 * 34; }
+    }
+    bird.wing = Math.max(0, bird.wing - dt * 4);
+    if (state === 'ready' || state === 'menu') { bird.y = H / 2 - 40 + Math.sin(t * 4) * 8; return; }
+    if (state === 'play' || state === 'dead') {
+      bird.vy += GRAV * dt;
+      bird.y += bird.vy * dt;
+      if (bird.y < -30) { bird.y = -30; bird.vy = 0; }
+      if (bird.y + bird.r >= H - GROUND) {
+        bird.y = H - GROUND - bird.r;
+        if (state === 'play') die();
+        if (state === 'dead') { state = 'landed'; setTimeout(gameOver, 450); }
+      }
+    }
+    if (state === 'play') {
+      for (const p of pipes) {
+        p.x -= SPEED * dt;
+        if (!p.passed && p.x + PW < bird.x) { p.passed = true; score++; Kit.beep(880, 0.08, 'square', 0.04, 200); }
+        if (hits(p)) die();
+      }
+      pipes = pipes.filter((p) => p.x > -PW - 10);
+      const last = pipes[pipes.length - 1];
+      if (!last || last.x < W + 60 - SPACING) addPipe((last ? last.x : W) + SPACING);
+    }
+  }
+
+  function drawPipe(x, y0, y1, capAtBottom) {
+    const g = ctx.createLinearGradient(x, 0, x + PW, 0);
+    g.addColorStop(0, '#16a34a'); g.addColorStop(0.35, '#4ade80'); g.addColorStop(1, '#15803d');
+    ctx.fillStyle = g;
+    ctx.fillRect(x + 4, y0, PW - 8, y1 - y0);
+    const capY = capAtBottom ? y1 - 26 : y0;
+    ctx.fillRect(x - 2, capY, PW + 4, 26);
+    ctx.strokeStyle = '#14532d'; ctx.lineWidth = 3;
+    ctx.strokeRect(x + 4, y0, PW - 8, y1 - y0);
+    ctx.strokeRect(x - 2, capY, PW + 4, 26);
+  }
+
+  function drawBird() {
+    const b = bird;
+    const ang = state === 'ready' || state === 'menu' ? 0 : Kit.clamp(b.vy / 600, -0.5, 1.3);
+    ctx.save();
+    ctx.translate(b.x, b.y); ctx.rotate(ang);
+    ctx.fillStyle = '#facc15'; ctx.strokeStyle = '#7c4a03'; ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.ellipse(0, 0, 19, 15, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#fde68a';
+    ctx.beginPath(); ctx.ellipse(-2, 6, 11, 6, 0, 0, Math.PI * 2); ctx.fill();
+    const flapA = Math.sin(t * 22) * 0.5 * (b.wing > 0 || state === 'ready' || state === 'menu' ? 1 : 0.2);
+    ctx.save(); ctx.translate(-6, 1); ctx.rotate(flapA);
+    ctx.fillStyle = '#fbbf24'; ctx.beginPath(); ctx.ellipse(-4, 0, 10, 6, -0.3, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.restore();
+    ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(8, -5, 6.5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#111'; ctx.beginPath(); ctx.arc(10, -5, 3, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#f97316';
+    ctx.beginPath(); ctx.moveTo(14, 1); ctx.lineTo(26, 4); ctx.lineTo(14, 9); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.restore();
+  }
+
+  function draw() {
+    const sky = ctx.createLinearGradient(0, 0, 0, H);
+    sky.addColorStop(0, '#38bdf8'); sky.addColorStop(0.7, '#7dd3fc'); sky.addColorStop(1, '#bae6fd');
+    ctx.fillStyle = sky; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = 'rgba(255,255,255,.85)';
+    for (const c of clouds) {
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, 22 * c.s, 0, Math.PI * 2); ctx.arc(c.x + 24 * c.s, c.y - 10 * c.s, 26 * c.s, 0, Math.PI * 2); ctx.arc(c.x + 50 * c.s, c.y, 20 * c.s, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.fillStyle = '#93c5fd';
+    for (const b of city) ctx.fillRect(b.x, H - GROUND - b.h, b.w, b.h);
+    ctx.fillStyle = '#86efac';
+    for (let x = -20; x < W + 40; x += 40) { ctx.beginPath(); ctx.arc(x + (groundX % 40), H - GROUND, 26, Math.PI, 0); ctx.fill(); }
+    for (const p of pipes) { drawPipe(p.x, -10, p.c - p.g / 2, true); drawPipe(p.x, p.c + p.g / 2, H - GROUND, false); }
+    // ground
+    ctx.fillStyle = '#ded895'; ctx.fillRect(0, H - GROUND, W, GROUND);
+    ctx.fillStyle = '#65a30d'; ctx.fillRect(0, H - GROUND, W, 16);
+    ctx.fillStyle = '#84cc16';
+    for (let x = groundX - 24; x < W + 24; x += 24) {
+      ctx.beginPath(); ctx.moveTo(x, H - GROUND + 16); ctx.lineTo(x + 12, H - GROUND); ctx.lineTo(x + 24, H - GROUND); ctx.lineTo(x + 12, H - GROUND + 16); ctx.fill();
+    }
+    ctx.fillStyle = '#4d7c0f'; ctx.fillRect(0, H - GROUND + 16, W, 3);
+    drawBird();
+    parts.draw(ctx);
+    if (state !== 'menu') Kit.text(ctx, String(score), W / 2, 70, { size: 56, weight: 900, stroke: '#0b1124', strokeWidth: 8 });
+    if (state === 'ready') {
+      Kit.text(ctx, 'Get Ready!', W / 2, 190, { size: 40, weight: 900, color: '#facc15', stroke: '#7c2d12', strokeWidth: 8 });
+      ctx.globalAlpha = 0.7 + Math.sin(t * 5) * 0.3;
+      Kit.text(ctx, Kit.isTouch ? 'Tap to flap' : 'Click or press Space to flap', W / 2, H / 2 + 40, { size: 18, stroke: '#0b1124', strokeWidth: 5 });
+      ctx.globalAlpha = 1;
+    }
+    if (flash > 0) { ctx.fillStyle = 'rgba(255,255,255,' + flash * 0.7 + ')'; ctx.fillRect(0, 0, W, H); }
+  }
+
+  window.addEventListener('keydown', (e) => { if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW') { if (!e.repeat) flap(); } });
+  document.body.addEventListener('pointerdown', flap);
+
+  reset();
+  Kit.overlay({
+    title: 'Sky Hop',
+    html: '<p>Flap through the gaps between the pipes. Each pipe you pass is a point. Touch anything and it\'s over!</p>',
+    buttons: [{ label: 'Play', onClick: () => { reset(); state = 'ready'; } }],
+    keys: '<kbd>Space</kbd>, <kbd>↑</kbd>, click or tap to flap'
+  });
+  Kit.loop((dt) => { update(dt); draw(); }).start();
+})();
+</script>
+</body>
+</html>

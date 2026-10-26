@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Four in a Row</title>
+<link rel="stylesheet" href="../shared/kit.css">
+</head>
+<body>
+<script src="../shared/kit.js"></script>
+<script>
+(() => {
+  const W = 600, H = 640, COLS = 7, ROWS = 6, CS = 80, BX = 20, BY = 140, R = 31;
+  const view = Kit.canvas(W, H), ctx = view.ctx;
+  const ORDER = [3, 2, 4, 1, 5, 0, 6];
+  const COLOR = { 1: ['#ef4444', '#b91c1c'], 2: ['#facc15', '#ca8a04'] };
+  const DEPTH = { easy: 1, normal: 4, hard: 6 };
+  const MENU_BTN = { x: W - 110, y: 16, w: 92, h: 34 };
+  const WINDOWS = [];
+  for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
+    for (const [dr, dc] of [[0, 1], [1, 0], [1, 1], [1, -1]]) {
+      const cells = [0, 1, 2, 3].map((k) => [r + dr * k, c + dc * k]);
+      if (cells.every(([a, b]) => a >= 0 && a < ROWS && b >= 0 && b < COLS)) WINDOWS.push(cells);
+    }
+  }
+  let board, turn, mode = 'cpu', level = 'normal', anim = null, over = false, winCells = null, hoverC = 3, thinking = false;
+  let starter = 1, score = { 1: 0, 2: 0, D: 0 }, t = 0, msg = '';
+
+  /* ----- rules ----- */
+  const lowest = (b, c) => { for (let r = ROWS - 1; r >= 0; r--) if (!b[r][c]) return r; return -1; };
+  function winLine(b, r, c) {
+    const p = b[r][c];
+    for (const [dr, dc] of [[0, 1], [1, 0], [1, 1], [1, -1]]) {
+      const line = [[r, c]];
+      for (const s of [1, -1]) {
+        let rr = r + dr * s, cc = c + dc * s;
+        while (rr >= 0 && rr < ROWS && cc >= 0 && cc < COLS && b[rr][cc] === p) { line.push([rr, cc]); rr += dr * s; cc += dc * s; }
+      }
+      if (line.length >= 4) return line;
+    }
+    return null;
+  }
+  const full = (b) => b[0].every(Boolean);
+
+  /* ----- computer player (negamax with alpha-beta pruning) ----- */
+  function evaluate(b, p) {
+    const o = 3 - p;
+    let s = 0;
+    for (const w of WINDOWS) {
+      let mine = 0, theirs = 0;
+      for (const [r, c] of w) { if (b[r][c] === p) mine++; else if (b[r][c] === o) theirs++; }
+      if (theirs === 0) s += mine === 3 ? 6 : mine === 2 ? 2 : 0;
+      else if (mine === 0) s -= theirs === 3 ? 5 : theirs === 2 ? 2 : 0;
+    }
+    for (let r = 0; r < ROWS; r++) s += b[r][3] === p ? 3 : b[r][3] === o ? -3 : 0;
+    return s;
+  }
+  function negamax(b, depth, alpha, beta, p) {
+    if (full(b)) return 0;
+    if (depth === 0) return evaluate(b, p);
+    for (const c of ORDER) {
+      const r = lowest(b, c);
+      if (r < 0) continue;
+      b[r][c] = p;
+      if (winLine(b, r, c)) { b[r][c] = 0; return 100000 + depth; }
+      const v = -negamax(b, depth - 1, -beta, -alpha, 3 - p);
+      b[r][c] = 0;
+      if (v >= beta) return v;
+      if (v > alpha) alpha = v;
+    }
+    return alpha;
+  }
+  function cpuChoose() {
+    const b = board.map((r) => r.slice());
+    const valid = ORDER.filter((c) => lowest(b, c) >= 0);
+    if (level === 'easy' && Math.random() < 0.35) return Kit.pick(valid);
+    let best = -Infinity, options = [];
+    for (const c of valid) {
+      const r = lowest(b, c);
+      b[r][c] = 2;
+      const v = winLine(b, r, c) ? 1e6 : -negamax(b, DEPTH[level] - 1, -Infinity, Infinity, 1);
+      b[r][c] = 0;
+      if (v > best) { best = v; options = [c]; } else if (v === best) options.push(c);
+    }
+    return Kit.pick(options);
+  }
+
+  /* ----- game flow ----- */
+  function newRound() {
+    board = [...Array(ROWS)].map(() => Array(COLS).fill(0));
+    turn = starter; over = false; winCells = null; anim = null; thinking = false;
+    updateMsg();
+    if (mode === 'cpu' && turn === 2) cpuTurn();
+  }
+  function updateMsg() {
+    if (mode === 'cpu') msg = turn === 1 ? 'Your turn' : 'Computer is thinking…';
+    else msg = (turn === 1 ? 'Red' : 'Yellow') + "'s turn";
+  }
+  function drop(c) {
+    if (over || anim || thinking || Kit.overlayOpen) return;
+    if (mode === 'cpu' && turn !== 1) return;
+    play(c);
+  }
+  function play(c) {
+    const r = lowest(board, c);
+    if (r < 0) return;
+    anim = { c, r, p: turn, y: BY - 50, vy: 0, bounced: false };
+    Kit.beep(300, 0.04, 'sine', 0.03);
+  }
+  function land() {
+    const { c, r, p } = anim;
+    anim = null;
+    board[r][c] = p;
+    Kit.beep(p === 1 ? 260 : 330, 0.08, 'triangle', 0.06);
+    const line = winLine(board, r, c);
+    if (line) return finish(p, line);
+    if (full(board)) return finish('D');
+    turn = 3 - p;
+    updateMsg();
+    if (mode === 'cpu' && turn === 2) cpuTurn();
+  }
+  function cpuTurn() {
+    thinking = true;
+    setTimeout(() => {
+      const c = cpuChoose();
+      thinking = false;
+      if (!over) play(c);
+    }, 380);
+  }
+  function finish(p, line) {
+    over = true; winCells = line || null;
+    score[p]++;
+    starter = 3 - starter;
+    if (p === 'D') msg = "It's a draw!";
+    else if (mode === 'cpu') msg = p === 1 ? 'You win! 🎉' : 'Computer wins!';
+    else msg = (p === 1 ? 'Red' : 'Yellow') + ' wins! 🎉';
+    if (p === 1 || (mode === '2p' && p === 2)) [523, 659, 784, 1046].forEach((f, k) => setTimeout(() => Kit.beep(f, 0.14, 'triangle', 0.05), k * 110));
+    else if (p === 2) Kit.beep(200, 0.35, 'sawtooth', 0.04, -80);
+    msg += '  ·  tap to play again';
+  }
+
+  function update(dt) {
+    t += dt;
+    if (!anim) return;
+    const target = BY + anim.r * CS + CS / 2;
+    anim.vy += 2600 * dt;
+    anim.y += anim.vy * dt;
+    if (anim.y >= target) {
+      anim.y = target;
+      if (!anim.bounced && anim.vy > 400) { anim.vy = -anim.vy * 0.25; anim.bounced = true; }
+      else land();
+    }
+  }
+
+  function piece(x, y, p, alpha = 1) {
+    ctx.globalAlpha = alpha;
+    const [a, b] = COLOR[p];
+    ctx.fillStyle = b; ctx.beginPath(); ctx.arc(x, y, R, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = a; ctx.beginPath(); ctx.arc(x, y, R - 5, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,.15)'; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(x, y, R - 12, 0, Math.PI * 2); ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+
+  function mini(x, y, p) { ctx.save(); ctx.translate(x, y); ctx.scale(0.42, 0.42); piece(0, 0, p); ctx.restore(); }
+
+  function draw() {
+    ctx.fillStyle = '#0f1730'; ctx.fillRect(0, 0, W, H);
+    Kit.text(ctx, 'FOUR IN A ROW', 20, 34, { align: 'left', size: 22, weight: 900, color: '#93c5fd' });
+    ctx.fillStyle = '#2a3363'; Kit.rr(ctx, MENU_BTN.x, MENU_BTN.y, MENU_BTN.w, MENU_BTN.h, 10); ctx.fill();
+    Kit.text(ctx, 'Menu', MENU_BTN.x + MENU_BTN.w / 2, MENU_BTN.y + MENU_BTN.h / 2 + 1, { size: 15 });
+    const names = mode === 'cpu' ? ['You', 'CPU'] : ['Red', 'Yellow'];
+    mini(34, 70, 1); Kit.text(ctx, names[0] + ' ' + score[1], 52, 70, { align: 'left', size: 17 });
+    mini(W / 2 + 40, 70, 2); Kit.text(ctx, names[1] + ' ' + score[2], W / 2 + 60, 70, { align: 'left', size: 17 });
+    Kit.text(ctx, msg, W / 2, 112, { size: 16, weight: 600, color: over ? '#fde68a' : '#c7d2fe' });
+
+    for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) if (board[r][c]) piece(BX + c * CS + CS / 2, BY + r * CS + CS / 2, board[r][c]);
+    if (anim) piece(BX + anim.c * CS + CS / 2, anim.y, anim.p);
+    const canHover = !over && !anim && !thinking && (mode === '2p' || turn === 1) && hoverC >= 0 && lowest(board, hoverC) >= 0;
+    // board with holes
+    ctx.fillStyle = '#2563eb';
+    ctx.beginPath();
+    Kit.rr(ctx, BX - 6, BY - 6, COLS * CS + 12, ROWS * CS + 12, 18);
+    for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
+      const x = BX + c * CS + CS / 2, y = BY + r * CS + CS / 2;
+      ctx.moveTo(x + R + 1, y); ctx.arc(x, y, R + 1, 0, Math.PI * 2);
+    }
+    ctx.fill('evenodd');
+    ctx.strokeStyle = '#1d4ed8'; ctx.lineWidth = 3;
+    for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) { ctx.beginPath(); ctx.arc(BX + c * CS + CS / 2, BY + r * CS + CS / 2, R + 1, 0, Math.PI * 2); ctx.stroke(); }
+    if (canHover) {
+      const r = lowest(board, hoverC);
+      ctx.strokeStyle = COLOR[turn][0]; ctx.globalAlpha = 0.55; ctx.lineWidth = 3; ctx.setLineDash([6, 6]);
+      ctx.beginPath(); ctx.arc(BX + hoverC * CS + CS / 2, BY + r * CS + CS / 2, R - 4, 0, Math.PI * 2); ctx.stroke();
+      ctx.setLineDash([]); ctx.globalAlpha = 1;
+    }
+    if (winCells) {
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 4 + Math.sin(t * 6) * 2;
+      for (const [r, c] of winCells) { ctx.beginPath(); ctx.arc(BX + c * CS + CS / 2, BY + r * CS + CS / 2, R - 8, 0, Math.PI * 2); ctx.stroke(); }
+    }
+  }
+
+  function menu() {
+    Kit.overlay({
+      title: 'Four in a Row',
+      html: '<p>Take turns dropping discs into the board. The first to line up <b>four</b> in a row — across, down or diagonally — wins!</p>',
+      buttons: [
+        { label: 'vs CPU', onClick: () => { mode = 'cpu'; level = 'normal'; reset(); } },
+        { label: 'Easy', alt: true, onClick: () => { mode = 'cpu'; level = 'easy'; reset(); } },
+        { label: 'Hard', alt: true, onClick: () => { mode = 'cpu'; level = 'hard'; reset(); } },
+        { label: '2 Players', alt: true, onClick: () => { mode = '2p'; reset(); } }
+      ],
+      keys: 'Click a column, or use <kbd>1</kbd>–<kbd>7</kbd> · <kbd>←</kbd><kbd>→</kbd> + <kbd>Space</kbd>'
+    });
+  }
+  function reset() { score = { 1: 0, 2: 0, D: 0 }; starter = 1; newRound(); }
+
+  const colAt = (e) => { const p = view.toLocal(e); const c = Math.floor((p.x - BX) / CS); return c >= 0 && c < COLS ? c : -1; };
+  view.canvas.addEventListener('pointermove', (e) => { const c = colAt(e); if (c >= 0) hoverC = c; });
+  view.canvas.addEventListener('pointerdown', (e) => {
+    const p = view.toLocal(e), m = MENU_BTN;
+    if (p.x >= m.x && p.x <= m.x + m.w && p.y >= m.y && p.y <= m.y + m.h) return menu();
+    if (over) return newRound();
+    const c = colAt(e);
+    if (c >= 0) { hoverC = c; drop(c); }
+  });
+  window.addEventListener('keydown', (e) => {
+    if (Kit.overlayOpen) return;
+    const n = /^(Digit|Numpad)([1-7])$/.exec(e.code);
+    if (over && (n || e.code === 'Space' || e.code === 'Enter')) return newRound();
+    if (n) { hoverC = +n[2] - 1; drop(hoverC); }
+    if (e.code === 'ArrowLeft') hoverC = Math.max(0, hoverC - 1);
+    if (e.code === 'ArrowRight') hoverC = Math.min(COLS - 1, hoverC + 1);
+    if (e.code === 'Space' || e.code === 'Enter' || e.code === 'ArrowDown') drop(hoverC);
+  });
+
+  newRound();
+  menu();
+  Kit.loop((dt) => { update(dt); draw(); }).start();
+})();
+</script>
+</body>
+</html>

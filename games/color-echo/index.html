@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Color Echo</title>
+<link rel="stylesheet" href="../shared/kit.css">
+<style>
+  body { flex-direction: column; gap: 18px; }
+  #wheel {
+    position: relative; width: var(--s); height: var(--s); display: grid; grid-template-columns: 1fr 1fr; gap: calc(var(--s) * .03);
+    padding: calc(var(--s) * .03); background: #0a0d1f; border-radius: 50%; box-shadow: 0 20px 60px rgba(0, 0, 0, .55);
+  }
+  .pad { border: 0; cursor: pointer; transition: filter .08s, transform .08s; filter: brightness(.55) saturate(.8); padding: 0; }
+  .pad.lit { filter: brightness(1.25) saturate(1.1); transform: scale(.985); box-shadow: 0 0 40px currentColor; }
+  .pad:disabled { cursor: default; }
+  .p0 { background: #22c55e; color: #22c55e; border-top-left-radius: 100%; }
+  .p1 { background: #ef4444; color: #ef4444; border-top-right-radius: 100%; }
+  .p2 { background: #facc15; color: #facc15; border-bottom-left-radius: 100%; }
+  .p3 { background: #3b82f6; color: #3b82f6; border-bottom-right-radius: 100%; }
+  #hub {
+    position: absolute; left: 50%; top: 50%; width: 40%; height: 40%; transform: translate(-50%, -50%); border-radius: 50%;
+    background: #161c38; border: calc(var(--s) * .025) solid #0a0d1f; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  }
+  #hub b { font-size: calc(var(--s) * .12); line-height: 1; }
+  #hub span { font-size: calc(var(--s) * .035); color: #9aa3d6; text-transform: uppercase; letter-spacing: 1px; margin-top: 4px; }
+  #msg { font-size: 18px; font-weight: 700; min-height: 24px; color: #c7d2fe; }
+</style>
+</head>
+<body>
+<div id="msg">Watch the colours, then repeat them!</div>
+<div id="wheel">
+  <button class="pad p0" data-i="0" aria-label="Green"></button>
+  <button class="pad p1" data-i="1" aria-label="Red"></button>
+  <button class="pad p2" data-i="2" aria-label="Yellow"></button>
+  <button class="pad p3" data-i="3" aria-label="Blue"></button>
+  <div id="hub"><b id="score">0</b><span id="best">Best 0</span></div>
+</div>
+<div class="kit-keys">Click the pads, or use <kbd>Q</kbd> <kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> (or <kbd>1</kbd>–<kbd>4</kbd>)</div>
+<script src="../shared/kit.js"></script>
+<script>
+(() => {
+  const ID = 'color-echo';
+  const $ = (id) => document.getElementById(id);
+  const TONES = [392, 329.63, 261.63, 196];
+  const pads = [...document.querySelectorAll('.pad')];
+  let seq = [], pos = 0, accepting = false, playing = false, best = Kit.getBest(ID), timers = [];
+
+  function fit() {
+    const s = Math.floor(Math.min(window.innerWidth - 40, window.innerHeight - 140, 460));
+    document.documentElement.style.setProperty('--s', Math.max(220, s) + 'px');
+  }
+  function light(i, ms) {
+    pads[i].classList.add('lit');
+    Kit.beep(TONES[i], ms / 1000, 'triangle', 0.09);
+    timers.push(setTimeout(() => pads[i].classList.remove('lit'), ms));
+  }
+  function stats() { $('score').textContent = Math.max(0, seq.length - (accepting || playing ? 1 : 0)); $('best').textContent = 'Best ' + best; }
+
+  function start() {
+    timers.forEach(clearTimeout); timers = [];
+    seq = []; next();
+  }
+  function next() {
+    seq.push(Kit.randInt(0, 3));
+    pos = 0; accepting = false; playing = true;
+    stats();
+    $('msg').textContent = 'Watch…';
+    const on = Math.max(220, 520 - seq.length * 18), gap = Math.max(90, 200 - seq.length * 6);
+    seq.forEach((p, k) => timers.push(setTimeout(() => light(p, on), 700 + k * (on + gap))));
+    timers.push(setTimeout(() => { playing = false; accepting = true; $('msg').textContent = 'Your turn! (' + seq.length + ')'; }, 700 + seq.length * (on + gap)));
+  }
+  function press(i) {
+    if (Kit.overlayOpen) return;
+    if (!accepting) { if (!playing && !seq.length) start(); return; }
+    if (i === seq[pos]) {
+      light(i, 220);
+      pos++;
+      if (pos === seq.length) {
+        accepting = false;
+        $('msg').textContent = 'Nice! ✓';
+        stats();
+        timers.push(setTimeout(next, 650));
+      }
+    } else fail();
+  }
+  function fail() {
+    accepting = false;
+    Kit.beep(90, 0.6, 'sawtooth', 0.08);
+    pads.forEach((p) => p.classList.add('lit'));
+    setTimeout(() => pads.forEach((p) => p.classList.remove('lit')), 400);
+    const scoreNow = seq.length - 1;
+    const rec = Kit.submitBest(ID, scoreNow);
+    best = Kit.getBest(ID);
+    seq = [];
+    stats();
+    $('msg').textContent = 'Oops!';
+    setTimeout(() => Kit.overlay({
+      title: 'Game Over',
+      html: `<div class="big">${scoreNow}</div><p>sequence${scoreNow === 1 ? '' : 's'} remembered</p><p>${rec ? '<span class="gold">New best!</span>' : 'Best: ' + best}</p>`,
+      buttons: [{ label: 'Play again', onClick: start }]
+    }), 700);
+  }
+
+  pads.forEach((p) => p.addEventListener('pointerdown', (e) => { e.preventDefault(); press(+p.dataset.i); }));
+  window.addEventListener('keydown', (e) => {
+    if (e.repeat) return;
+    const map = { KeyQ: 0, Digit1: 0, KeyW: 1, Digit2: 1, KeyA: 2, Digit3: 2, KeyS: 3, Digit4: 3 };
+    if (e.code in map) press(map[e.code]);
+  });
+  window.addEventListener('resize', fit);
+  fit(); stats();
+  Kit.overlay({
+    title: 'Color Echo',
+    html: '<p>The pads will light up in a pattern. Repeat it back in the same order. Each round adds one more step — how long can you keep up?</p>',
+    buttons: [{ label: 'Start', onClick: start }],
+    keys: 'Click / tap the pads, or use <kbd>Q</kbd> <kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd>'
+  });
+})();
+</script>
+</body>
+</html>

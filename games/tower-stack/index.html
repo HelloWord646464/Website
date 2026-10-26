@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Tower Stack</title>
+<link rel="stylesheet" href="../shared/kit.css">
+</head>
+<body>
+<script src="../shared/kit.js"></script>
+<script>
+(() => {
+  const ID = 'tower-stack', W = 400, H = 700, BH = 30, DEPTH = 14, BASE_W = 200, BASE_Y = H - 110;
+  const view = Kit.canvas(W, H), ctx = view.ctx;
+  const parts = new Kit.Particles();
+  let stack, cur, debris, ripples, camY, combo, score, hue0, state = 'menu', best = Kit.getBest(ID), t = 0, popup = null;
+
+  const color = (i, l = 60) => `hsl(${(hue0 + i * 7) % 360},70%,${l}%)`;
+
+  function reset() {
+    hue0 = Kit.randInt(0, 359);
+    stack = [{ x: W / 2 - BASE_W / 2, w: BASE_W, i: 0 }];
+    for (let i = 1; i < 4; i++) stack.unshift({ x: W / 2 - BASE_W / 2, w: BASE_W, i: -i });
+    stack.sort((a, b) => a.i - b.i);
+    debris = []; ripples = []; camY = 0; combo = 0; score = 0; popup = null;
+    nextBlock();
+  }
+  const top = () => stack[stack.length - 1];
+  const yOf = (i) => BASE_Y - i * BH;
+
+  function nextBlock() {
+    const prev = top(), i = prev.i + 1;
+    const fromLeft = i % 2 === 0;
+    cur = { x: fromLeft ? -prev.w * 0.35 : W - prev.w * 0.65, w: prev.w, i, dir: fromLeft ? 1 : -1, speed: Math.min(170 + score * 6, 430), born: t };
+  }
+
+  function drop() {
+    if (state !== 'play' || Kit.overlayOpen || !cur || t - cur.born < 0.12) return;
+    const prev = top();
+    const left = Math.max(cur.x, prev.x), right = Math.min(cur.x + cur.w, prev.x + prev.w);
+    const overlap = right - left;
+    if (overlap <= 0) {
+      debris.push({ x: cur.x, y: yOf(cur.i), w: cur.w, h: BH, vx: cur.dir * 60, vy: 0, rot: 0, vr: cur.dir * 1.5, c: cur.i });
+      cur = null;
+      return gameOver();
+    }
+    if (Math.abs(cur.x - prev.x) < 5) {
+      combo++;
+      let w = prev.w, x = prev.x;
+      if (combo >= 3 && w < BASE_W) { const g = Math.min(10, BASE_W - w); w += g; x -= g / 2; }
+      stack.push({ x, w, i: cur.i });
+      ripples.push({ x, w, y: yOf(cur.i), t: 0 });
+      popup = { text: combo >= 3 ? 'Perfect x' + combo + '!' : 'Perfect!', t: 0.9 };
+      Kit.beep(440 * Math.pow(1.06, Math.min(combo, 12)), 0.12, 'triangle', 0.06);
+    } else {
+      combo = 0;
+      stack.push({ x: left, w: overlap, i: cur.i });
+      const cutX = cur.x < prev.x ? cur.x : right;
+      const cutW = cur.w - overlap;
+      debris.push({ x: cutX, y: yOf(cur.i), w: cutW, h: BH, vx: (cur.x < prev.x ? -1 : 1) * 70, vy: -40, rot: 0, vr: (cur.x < prev.x ? -1 : 1) * 2.4, c: cur.i });
+      Kit.beep(260, 0.07, 'square', 0.04);
+    }
+    score++;
+    nextBlock();
+  }
+
+  function gameOver() {
+    state = 'over';
+    Kit.beep(200, 0.4, 'sawtooth', 0.05, -120);
+    const rec = Kit.submitBest(ID, score);
+    best = Kit.getBest(ID);
+    setTimeout(() => Kit.overlay({
+      title: 'Tower complete',
+      html: `<div class="big">${score}</div><p>blocks stacked</p><p>${rec ? '<span class="gold">New best!</span>' : 'Best: ' + best}</p>`,
+      buttons: [{ label: 'Build again', onClick: () => { reset(); state = 'play'; } }]
+    }), 900);
+  }
+
+  function update(dt) {
+    t += dt;
+    parts.update(dt);
+    if (popup) { popup.t -= dt; if (popup.t <= 0) popup = null; }
+    ripples = ripples.filter((r) => (r.t += dt) < 0.5);
+    for (const d of debris) { d.vy += 1400 * dt; d.x += d.vx * dt; d.y += d.vy * dt; d.rot += d.vr * dt; }
+    debris = debris.filter((d) => d.y - camY < H + 200);
+    const targetCam = Math.min(0, yOf(top().i) - H * 0.55);
+    camY += (targetCam - camY) * Math.min(1, dt * 5);
+    if (state === 'play' && cur) {
+      cur.x += cur.dir * cur.speed * dt;
+      const lim = top().w;
+      if (cur.x > W - cur.w + lim * 0.6 && cur.dir > 0) cur.dir = -1;
+      if (cur.x < -lim * 0.6 && cur.dir < 0) cur.dir = 1;
+    }
+  }
+
+  function block(x, y, w, i, alpha = 1) {
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = color(i, 72);
+    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + DEPTH, y - DEPTH); ctx.lineTo(x + w + DEPTH, y - DEPTH); ctx.lineTo(x + w, y); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = color(i, 42);
+    ctx.beginPath(); ctx.moveTo(x + w, y); ctx.lineTo(x + w + DEPTH, y - DEPTH); ctx.lineTo(x + w + DEPTH, y + BH - DEPTH); ctx.lineTo(x + w, y + BH); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = color(i, 56);
+    ctx.fillRect(x, y, w, BH);
+    ctx.globalAlpha = 1;
+  }
+
+  function draw() {
+    const g = ctx.createLinearGradient(0, 0, 0, H);
+    const n = top().i;
+    g.addColorStop(0, `hsl(${(hue0 + n * 7 + 160) % 360},45%,22%)`);
+    g.addColorStop(1, `hsl(${(hue0 + n * 7 + 200) % 360},50%,38%)`);
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    ctx.save(); ctx.translate(0, -camY);
+    for (const b of stack) if (yOf(b.i) - camY < H + 40) block(b.x, yOf(b.i), b.w, b.i);
+    for (const r of ripples) {
+      ctx.strokeStyle = 'rgba(255,255,255,' + (1 - r.t / 0.5) + ')'; ctx.lineWidth = 3;
+      const s = r.t * 40;
+      ctx.strokeRect(r.x - s, r.y - s * 0.5, r.w + s * 2, BH + s);
+    }
+    if (cur && state === 'play') block(cur.x, yOf(cur.i), cur.w, cur.i);
+    for (const d of debris) {
+      ctx.save(); ctx.translate(d.x + d.w / 2, d.y + d.h / 2); ctx.rotate(d.rot);
+      block(-d.w / 2, -d.h / 2, d.w, d.c, 0.9);
+      ctx.restore();
+    }
+    ctx.restore();
+    parts.draw(ctx);
+    if (state !== 'menu') Kit.text(ctx, String(score), W / 2, 80, { size: 64, weight: 900, color: 'rgba(255,255,255,.92)' });
+    if (popup) {
+      ctx.globalAlpha = Math.min(1, popup.t * 2);
+      Kit.text(ctx, popup.text, W / 2, 140 - (0.9 - popup.t) * 30, { size: 24, weight: 800, color: '#fde68a' });
+      ctx.globalAlpha = 1;
+    }
+    if (state === 'play' && score === 0) {
+      ctx.globalAlpha = 0.6 + Math.sin(t * 5) * 0.3;
+      Kit.text(ctx, Kit.isTouch ? 'Tap to drop' : 'Click or press Space to drop', W / 2, 190, { size: 18 });
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  window.addEventListener('keydown', (e) => { if ((e.code === 'Space' || e.code === 'Enter' || e.code === 'ArrowDown') && !e.repeat) drop(); });
+  document.body.addEventListener('pointerdown', drop);
+
+  reset();
+  Kit.overlay({
+    title: 'Tower Stack',
+    html: '<p>Drop each sliding block onto the tower. Any part that hangs over the edge gets chopped off. Line it up perfectly 3 times in a row to grow the block back!</p>',
+    buttons: [{ label: 'Play', onClick: () => { reset(); state = 'play'; } }],
+    keys: '<kbd>Space</kbd>, click or tap to drop'
+  });
+  Kit.loop((dt) => { update(dt); draw(); }).start();
+})();
+</script>
+</body>
+</html>

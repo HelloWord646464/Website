@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Paddle Duel</title>
+<link rel="stylesheet" href="../shared/kit.css">
+</head>
+<body>
+<script src="../shared/kit.js"></script>
+<script>
+(() => {
+  const ID = 'paddle-duel', W = 800, H = 500, PH = 90, PW = 14, WIN = 7;
+  const view = Kit.canvas(W, H), ctx = view.ctx;
+  const parts = new Kit.Particles();
+  const LEVELS = { easy: { speed: 280, err: 46 }, normal: { speed: 400, err: 24 }, hard: { speed: 560, err: 8 } };
+  let L, R, ball, mode = 'cpu', cpu = LEVELS.normal, serveT = 0, state = 'menu', err = 0, trail = [], hitFlash = { l: 0, r: 0 };
+  const pointers = new Map();
+
+  function reset() {
+    L = { x: 30, y: H / 2, score: 0, target: null };
+    R = { x: W - 30 - PW, y: H / 2, score: 0, target: null };
+    serve(Math.random() < 0.5 ? 1 : -1);
+  }
+  function serve(dir) {
+    ball = { x: W / 2, y: H / 2, vx: 0, vy: 0, r: 9, dir, speed: 380 };
+    serveT = 1; trail = [];
+  }
+  function launch() {
+    const a = Kit.rand(-0.45, 0.45);
+    ball.vx = Math.cos(a) * ball.speed * ball.dir;
+    ball.vy = Math.sin(a) * ball.speed;
+    err = Kit.rand(-cpu.err, cpu.err);
+  }
+  function start(m, level) {
+    mode = m; if (level) cpu = LEVELS[level];
+    reset(); state = 'play';
+  }
+
+  function movePaddle(p, up, down, dt) {
+    if (up || down) p.target = null;
+    if (up) p.y -= 520 * dt;
+    if (down) p.y += 520 * dt;
+    if (p.target !== null && !up && !down) p.y += Kit.clamp(p.target - p.y, -900 * dt, 900 * dt);
+    p.y = Kit.clamp(p.y, PH / 2, H - PH / 2);
+  }
+
+  function bounce(p, side) {
+    const rel = Kit.clamp((ball.y - p.y) / (PH / 2), -1, 1);
+    const a = rel * 0.95;
+    ball.speed = Math.min(ball.speed + 26, 900);
+    ball.vx = Math.cos(a) * ball.speed * side;
+    ball.vy = Math.sin(a) * ball.speed;
+    ball.x = side > 0 ? p.x + PW + ball.r : p.x - ball.r;
+    parts.burst(ball.x, ball.y, 10, side > 0 ? '#22d3ee' : '#f472b6', 160, 0.4, 3);
+    hitFlash[side > 0 ? 'l' : 'r'] = 0.15;
+    err = Kit.rand(-cpu.err, cpu.err);
+    Kit.beep(side > 0 ? 440 : 520, 0.05, 'square', 0.05);
+  }
+
+  function point(winner) {
+    winner.score++;
+    Kit.beep(winner === L ? 660 : 220, 0.25, 'triangle', 0.05, winner === L ? 300 : -100);
+    parts.burst(ball.x < W / 2 ? 0 : W, ball.y, 24, '#fde68a', 260, 0.6, 4);
+    if (winner.score >= WIN) {
+      state = 'over';
+      const title = mode === 'cpu' ? (winner === L ? 'You win! 🏆' : 'Computer wins') : (winner === L ? 'Left player wins!' : 'Right player wins!');
+      setTimeout(() => Kit.overlay({
+        title,
+        html: `<div class="big">${L.score} – ${R.score}</div>`,
+        buttons: [{ label: 'Play again', onClick: () => start(mode) }, { label: 'Menu', alt: true, onClick: menu }]
+      }), 500);
+      return;
+    }
+    serve(winner === L ? 1 : -1);
+  }
+
+  function update(dt) {
+    parts.update(dt);
+    hitFlash.l = Math.max(0, hitFlash.l - dt); hitFlash.r = Math.max(0, hitFlash.r - dt);
+    if (state !== 'play') return;
+    if (mode === 'cpu') {
+      movePaddle(L, Kit.down('KeyW', 'ArrowUp'), Kit.down('KeyS', 'ArrowDown'), dt);
+      const target = ball.vx > 0 ? ball.y + err : H / 2;
+      R.y += Kit.clamp(target - R.y, -cpu.speed * dt, cpu.speed * dt);
+      R.y = Kit.clamp(R.y, PH / 2, H - PH / 2);
+    } else {
+      movePaddle(L, Kit.down('KeyW'), Kit.down('KeyS'), dt);
+      movePaddle(R, Kit.down('ArrowUp'), Kit.down('ArrowDown'), dt);
+    }
+    if (serveT > 0) { serveT -= dt; if (serveT <= 0) launch(); return; }
+    const steps = Math.ceil((ball.speed * dt) / 6);
+    for (let i = 0; i < steps; i++) {
+      ball.x += (ball.vx * dt) / steps; ball.y += (ball.vy * dt) / steps;
+      if (ball.y < ball.r) { ball.y = ball.r; ball.vy = Math.abs(ball.vy); Kit.beep(300, 0.03, 'sine', 0.04); }
+      if (ball.y > H - ball.r) { ball.y = H - ball.r; ball.vy = -Math.abs(ball.vy); Kit.beep(300, 0.03, 'sine', 0.04); }
+      if (ball.vx < 0 && ball.x - ball.r <= L.x + PW && ball.x + ball.r >= L.x && Math.abs(ball.y - L.y) <= PH / 2 + ball.r) bounce(L, 1);
+      if (ball.vx > 0 && ball.x + ball.r >= R.x && ball.x - ball.r <= R.x + PW && Math.abs(ball.y - R.y) <= PH / 2 + ball.r) bounce(R, -1);
+      if (ball.x < -20) return point(R);
+      if (ball.x > W + 20) return point(L);
+    }
+    trail.push({ x: ball.x, y: ball.y });
+    if (trail.length > 10) trail.shift();
+  }
+
+  function draw() {
+    ctx.fillStyle = '#0a0f26'; ctx.fillRect(0, 0, W, H);
+    ctx.strokeStyle = 'rgba(255,255,255,.15)'; ctx.lineWidth = 4; ctx.setLineDash([14, 14]);
+    ctx.beginPath(); ctx.moveTo(W / 2, 0); ctx.lineTo(W / 2, H); ctx.stroke(); ctx.setLineDash([]);
+    ctx.strokeStyle = 'rgba(255,255,255,.06)'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(W / 2, H / 2, 70, 0, Math.PI * 2); ctx.stroke();
+    if (L) {
+      Kit.text(ctx, String(L.score), W / 2 - 80, 70, { size: 72, weight: 900, color: 'rgba(34,211,238,.35)' });
+      Kit.text(ctx, String(R.score), W / 2 + 80, 70, { size: 72, weight: 900, color: 'rgba(244,114,182,.35)' });
+      Kit.text(ctx, mode === 'cpu' ? 'YOU' : 'P1', W / 2 - 80, 120, { size: 13, color: 'rgba(255,255,255,.35)' });
+      Kit.text(ctx, mode === 'cpu' ? 'CPU' : 'P2', W / 2 + 80, 120, { size: 13, color: 'rgba(255,255,255,.35)' });
+      for (const [p, col, fl] of [[L, '#22d3ee', hitFlash.l], [R, '#f472b6', hitFlash.r]]) {
+        ctx.fillStyle = fl > 0 ? '#fff' : col; ctx.shadowColor = col; ctx.shadowBlur = 18;
+        Kit.rr(ctx, p.x, p.y - PH / 2, PW, PH, 7); ctx.fill(); ctx.shadowBlur = 0;
+      }
+      trail.forEach((tp, i) => {
+        ctx.fillStyle = 'rgba(253,230,138,' + (i / trail.length) * 0.3 + ')';
+        ctx.beginPath(); ctx.arc(tp.x, tp.y, ball.r * (i / trail.length), 0, Math.PI * 2); ctx.fill();
+      });
+      if (!(serveT > 0 && Math.floor(serveT * 8) % 2)) {
+        ctx.fillStyle = '#fde68a'; ctx.shadowColor = '#facc15'; ctx.shadowBlur = 16;
+        ctx.beginPath(); ctx.arc(ball.x, ball.y, ball.r, 0, Math.PI * 2); ctx.fill(); ctx.shadowBlur = 0;
+      }
+    }
+    parts.draw(ctx);
+  }
+
+  function pause() {
+    if (state !== 'play') return;
+    state = 'paused';
+    Kit.overlay({ title: 'Paused', buttons: [{ label: 'Resume', onClick: () => { state = 'play'; } }, { label: 'Menu', alt: true, onClick: menu }] });
+  }
+  function menu() {
+    state = 'menu';
+    Kit.overlay({
+      title: 'Paddle Duel',
+      html: '<p>Keep the ball out of your goal! First to <b>7 points</b> wins. Hit the ball with the edge of your paddle for sharper angles.</p>',
+      buttons: [
+        { label: 'Play vs CPU', onClick: () => start('cpu', 'normal') },
+        { label: 'Easy', alt: true, onClick: () => start('cpu', 'easy') },
+        { label: 'Hard', alt: true, onClick: () => start('cpu', 'hard') },
+        { label: '2 Players', alt: true, onClick: () => start('2p') }
+      ],
+      keys: 'vs CPU: <kbd>W</kbd><kbd>S</kbd> / <kbd>↑</kbd><kbd>↓</kbd> or mouse / touch<br>2 Players: left <kbd>W</kbd><kbd>S</kbd> · right <kbd>↑</kbd><kbd>↓</kbd> · <kbd>P</kbd> pause'
+    });
+  }
+
+  window.addEventListener('keydown', (e) => { if (e.code === 'KeyP' || e.code === 'Escape') pause(); });
+  window.addEventListener('blur', pause);
+  function pointerTarget(e) {
+    if (state !== 'play') return;
+    const p = view.toLocal(e);
+    const paddle = mode === 'cpu' || p.x < W / 2 ? L : R;
+    paddle.target = Kit.clamp(p.y, PH / 2, H - PH / 2);
+    pointers.set(e.pointerId, paddle);
+  }
+  document.body.addEventListener('pointerdown', pointerTarget);
+  document.body.addEventListener('pointermove', (e) => { if (e.pointerType === 'mouse' || pointers.has(e.pointerId)) pointerTarget(e); });
+  window.addEventListener('pointerup', (e) => {
+    const p = pointers.get(e.pointerId);
+    if (p && e.pointerType !== 'mouse') p.target = null;
+    pointers.delete(e.pointerId);
+  });
+
+  reset();
+  menu();
+  Kit.loop((dt) => { update(dt); draw(); }).start();
+})();
+</script>
+</body>
+</html>

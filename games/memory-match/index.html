@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Memory Match</title>
+<link rel="stylesheet" href="../shared/kit.css">
+<style>
+  body { flex-direction: column; gap: 14px; }
+  #grid { display: grid; gap: var(--gap); grid-template-columns: repeat(var(--cols), var(--card)); }
+  .card { width: var(--card); height: var(--card); perspective: 700px; cursor: pointer; }
+  .inner { position: relative; width: 100%; height: 100%; transition: transform .38s cubic-bezier(.3, 1.4, .6, 1); transform-style: preserve-3d; }
+  .card.flip .inner { transform: rotateY(180deg); }
+  .face {
+    position: absolute; inset: 0; border-radius: 14px; display: flex; align-items: center; justify-content: center;
+    -webkit-backface-visibility: hidden; backface-visibility: hidden; box-shadow: 0 6px 16px rgba(0, 0, 0, .35);
+  }
+  .back {
+    background: radial-gradient(circle at 30% 25%, rgba(255, 255, 255, .25), transparent 40%), linear-gradient(135deg, #7c5cff, #3b25b0);
+    color: rgba(255, 255, 255, .55); font-size: calc(var(--card) * .38); border: 3px solid rgba(255, 255, 255, .15);
+  }
+  .card:hover .back { filter: brightness(1.12); }
+  .front { background: #f1f4ff; transform: rotateY(180deg); font-size: calc(var(--card) * .56); line-height: 1; }
+  .card.matched .front { background: #bbf7d0; box-shadow: 0 0 0 3px #4ade80, 0 6px 16px rgba(0, 0, 0, .35); animation: bounce .45s; }
+  .card.nope .front { background: #fecaca; }
+  @keyframes bounce { 40% { transform: rotateY(180deg) scale(1.12); } }
+</style>
+</head>
+<body>
+<div class="kit-bar" id="bar">
+  <select class="kit-select" id="diff" aria-label="Difficulty">
+    <option value="easy">Easy · 8 pairs</option>
+    <option value="medium">Medium · 10 pairs</option>
+    <option value="hard">Hard · 18 pairs</option>
+  </select>
+  <div class="kit-stat">Moves<b id="moves">0</b></div>
+  <div class="kit-stat">Pairs<b id="pairs">0/8</b></div>
+  <div class="kit-stat">Time<b id="time">0:00</b></div>
+  <button class="kit-small" id="new">New game</button>
+</div>
+<div id="grid"></div>
+<script src="../shared/kit.js"></script>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const DIFFS = { easy: { cols: 4, rows: 4 }, medium: { cols: 5, rows: 4 }, hard: { cols: 6, rows: 6 } };
+  const FACES = ['🐶', '🐱', '🦊', '🐼', '🐸', '🐵', '🦁', '🐯', '🐨', '🐷', '🐮', '🐰', '🐙', '🦄', '🐢', '🦋', '🐧', '🐳', '🦖', '🐝'];
+  let diff = Kit.store.get('memory:diff', 'easy'), cards, first, lock, moves, found, time, started, timer;
+
+  function newGame() {
+    const D = DIFFS[diff], pairs = (D.cols * D.rows) / 2;
+    const faces = Kit.shuffle(FACES.slice()).slice(0, pairs);
+    cards = Kit.shuffle([...faces, ...faces]).map((f) => ({ f, open: false, done: false }));
+    first = null; lock = false; moves = 0; found = 0; time = 0; started = false;
+    const grid = $('grid');
+    grid.innerHTML = '';
+    cards.forEach((c, i) => {
+      const el = document.createElement('div');
+      el.className = 'card';
+      el.innerHTML = '<div class="inner"><div class="face back">✦</div><div class="face front">' + c.f + '</div></div>';
+      el.addEventListener('click', () => flip(i));
+      c.el = el;
+      grid.appendChild(el);
+    });
+    $('diff').value = diff;
+    fit(); stats();
+  }
+
+  function stats() {
+    $('moves').textContent = moves;
+    $('pairs').textContent = found + '/' + cards.length / 2;
+    $('time').textContent = Kit.fmtTime(time);
+  }
+
+  function flip(i) {
+    const c = cards[i];
+    if (lock || c.open || c.done || Kit.overlayOpen) return;
+    started = true;
+    c.open = true; c.el.classList.add('flip');
+    Kit.beep(520, 0.04, 'sine', 0.04);
+    if (!first) { first = c; return; }
+    moves++;
+    const a = first, b = c;
+    first = null;
+    if (a.f === b.f) {
+      a.done = b.done = true;
+      found++;
+      setTimeout(() => { a.el.classList.add('matched'); b.el.classList.add('matched'); Kit.beep(784, 0.12, 'triangle', 0.05, 300); }, 250);
+      if (found === cards.length / 2) setTimeout(win, 700);
+    } else {
+      lock = true;
+      setTimeout(() => { a.el.classList.add('nope'); b.el.classList.add('nope'); Kit.beep(200, 0.1, 'triangle', 0.04); }, 300);
+      setTimeout(() => {
+        for (const k of [a, b]) { k.open = false; k.el.classList.remove('flip', 'nope'); }
+        lock = false;
+      }, 900);
+    }
+    stats();
+  }
+
+  function win() {
+    started = false;
+    [523, 659, 784, 1046].forEach((f, k) => setTimeout(() => Kit.beep(f, 0.15, 'triangle', 0.05), k * 110));
+    const rec = Kit.submitBest('memory:' + diff, moves, true);
+    const best = Kit.getBest('memory:' + diff, moves);
+    Kit.overlay({
+      title: 'All pairs found! 🎉',
+      html: `<div class="big">${moves} moves</div><p>Time: ${Kit.fmtTime(time)}</p><p>${rec ? '<span class="gold">New best (fewest moves)!</span>' : 'Best: ' + best + ' moves'}</p>`,
+      buttons: [{ label: 'Play again', onClick: newGame }]
+    });
+  }
+
+  function fit() {
+    const D = DIFFS[diff];
+    const aw = window.innerWidth - 24, ah = window.innerHeight - $('bar').offsetHeight - 50;
+    const gap = Math.max(6, Math.min(12, aw / 60));
+    const card = Math.floor(Math.min((aw - gap * (D.cols - 1)) / D.cols, (ah - gap * (D.rows - 1)) / D.rows, 130));
+    const root = document.documentElement.style;
+    root.setProperty('--card', card + 'px'); root.setProperty('--gap', gap + 'px'); root.setProperty('--cols', D.cols);
+  }
+
+  $('new').addEventListener('click', newGame);
+  $('diff').addEventListener('change', (e) => { diff = e.target.value; Kit.store.set('memory:diff', diff); newGame(); });
+  window.addEventListener('resize', fit);
+  setInterval(() => { if (started && document.visibilityState === 'visible') { time++; stats(); } }, 1000);
+  newGame();
+})();
+</script>
+</body>
+</html>

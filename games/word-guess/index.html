@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Word Guess</title>
+<link rel="stylesheet" href="../shared/kit.css">
+<style>
+  body { flex-direction: column; gap: 12px; }
+  #board { display: grid; grid-template-rows: repeat(6, var(--tile)); gap: 6px; }
+  .row { display: grid; grid-template-columns: repeat(5, var(--tile)); gap: 6px; }
+  .row.shake { animation: shake .4s; }
+  @keyframes shake { 20%, 60% { transform: translateX(-8px); } 40%, 80% { transform: translateX(8px); } }
+  .tile {
+    width: var(--tile); height: var(--tile); display: flex; align-items: center; justify-content: center;
+    border: 2px solid #2c3670; border-radius: 8px; font-size: calc(var(--tile) * .52); font-weight: 800; text-transform: uppercase; color: #fff;
+    background: #141a3a;
+  }
+  .tile.filled { border-color: #6873b8; animation: pulse .12s; }
+  @keyframes pulse { 50% { transform: scale(1.08); } }
+  .tile.flip { animation: flip .5s ease; }
+  @keyframes flip { 0% { transform: rotateX(0); } 50% { transform: rotateX(90deg); } 100% { transform: rotateX(0); } }
+  .tile.win { animation: hop .5s ease; }
+  @keyframes hop { 40% { transform: translateY(-14px); } }
+  .correct { background: #16a34a !important; border-color: #16a34a !important; }
+  .present { background: #ca8a04 !important; border-color: #ca8a04 !important; }
+  .absent { background: #3a4170 !important; border-color: #3a4170 !important; }
+  #kb { display: flex; flex-direction: column; gap: 6px; align-items: center; width: min(100vw - 16px, 520px); }
+  .krow { display: flex; gap: 5px; width: 100%; justify-content: center; }
+  .key {
+    flex: 1; max-width: 46px; height: var(--key); border: 0; border-radius: 8px; background: #6b74a8; color: #fff;
+    font: inherit; font-size: 16px; font-weight: 700; text-transform: uppercase; cursor: pointer; padding: 0;
+  }
+  .key.wide { max-width: 72px; flex: 1.5; font-size: 12px; }
+  .key:active { filter: brightness(1.2); }
+  #toast {
+    position: fixed; top: 70px; left: 50%; transform: translateX(-50%); background: #fff; color: #0b1020;
+    padding: 10px 16px; border-radius: 10px; font-weight: 700; opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 40;
+  }
+  #toast.show { opacity: 1; }
+  .dist { text-align: left; margin-top: 10px; }
+  .dist div { display: flex; align-items: center; gap: 6px; margin: 3px 0; font-size: 13px; }
+  .dist span.bar { background: #3a4170; color: #fff; padding: 2px 6px; border-radius: 4px; min-width: 22px; text-align: right; font-weight: 700; }
+  .dist span.bar.hi { background: #16a34a; }
+  .stats-row { display: flex; justify-content: center; gap: 18px; margin: 8px 0; }
+  .stats-row div { font-size: 11px; color: #9aa3d6; text-transform: uppercase; }
+  .stats-row b { display: block; font-size: 24px; color: #fff; }
+</style>
+</head>
+<body>
+<div class="kit-bar" id="bar">
+  <button class="kit-small" id="daily">📅 Daily</button>
+  <button class="kit-small" id="practice">🎲 Practice</button>
+  <button class="kit-small" id="stats">📊 Stats</button>
+</div>
+<div id="board"></div>
+<div id="kb"></div>
+<div id="toast"></div>
+<script src="../shared/kit.js"></script>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const ANSWERS = ('about above actor acute admit adopt adult after again agent agree ahead alarm album alert alike alive allow alone along amaze among angel anger angle angry apple apply arena argue arise armor arrow aside audio avoid award aware bacon badge baker basic beach beard beast begin being belly below bench berry birth black blade blame blank blast blend bless blind block bloom board bonus boost booth brain brake brand brave bread break brick bride brief bring broad brook brown brush build bunch burst cabin cable camel candy canoe cargo carry catch cause chain chair chalk charm chart chase cheap check cheek cheer chess chest chick chief child chill choir civic claim class clean clear click cliff climb clock close cloth cloud clown coach coast color comet comic coral couch count court cover crack craft crane crash crawl crazy cream creek crisp crowd crown crust curve cycle daily dairy daisy dance delay dense depth diary dirty disco dizzy dodge doubt dough dozen draft drain drama dream dress drift drill drink drive eager eagle early earth eight elbow elder empty enjoy enter entry equal error event every exact exist extra fable faint fairy faith false fancy feast fence ferry fever field fifth fifty final flame flash fleet flock flood floor flour fluid flute focus force forge forty found frame fresh front frost fruit funny ghost giant glass globe glove grace grade grain grand grant grape graph grass great green greet grill group grove guard guess guest guide habit happy heart heavy hedge hello hobby honey honor horse hotel house human humor hurry ideal image index inner input issue ivory jelly jewel joint jolly judge juice jumbo kayak knock label large laser later laugh layer learn lemon level light limit linen lobby local logic loose lucky lunar lunch magic major maker mango maple march match mayor medal melon mercy merry metal meter might minor mixed model money month motor mount mouse mouth movie music nerve never night ninja noble noise north novel nurse ocean offer often olive onion opera orbit order other otter outer owner paint panda panel paper party pasta patch peace peach pearl pedal penny phase phone photo piano piece pilot pitch pizza place plain plane plant plate plaza point polar porch power press price pride prime print prize proof proud pulse pupil puppy queen quest quick quiet quilt quite quote radar radio raise rally ranch range rapid raven reach react ready relax reply rider ridge right river roast robin robot rocky round route royal rugby ruler salad sauce scale scarf scene scent score scout sense serve seven shade shake shape share shark sharp sheep shelf shell shift shine shirt shore short shout sight silly skate skill skirt slate sleep slice slide slope small smart smell smile smoke snack snake sneak solar solid solve sound south space spare spark speak speed spell spend spice spike spoon sport spray squad stack staff stage stair stamp stand start state steam steel steep stick still stock stone stool storm story stove straw strip study style sugar sunny super sweet swift swing table taste teach teeth thank theme thick thing think third three throw thumb tiger tight timer toast today token topic torch total touch tough tower trace track trade trail train treat trend trial tribe trick truck truly trunk trust truth tulip tutor twice twist uncle under unity until upper urban usual valid value vapor video visit vital vivid vocal voice wagon waste watch water whale wheat wheel where which while white whole width witch world worry worth write wrong yacht yield young youth zebra')
+    .split(' ').filter((w) => /^[a-z]{5}$/.test(w));
+  const KEYS = ['qwertyuiop', 'asdfghjkl', '+zxcvbnm-'];
+  const RANK = { absent: 1, present: 2, correct: 3 };
+  let mode = 'daily', answer, guesses, current, over, busy = false;
+
+  const today = () => { const d = new Date(); return Math.floor((d.getTime() - d.getTimezoneOffset() * 60000) / 86400000); };
+  function dailyWord(day) {
+    let h = day * 2654435761 % 4294967296;
+    h = (h ^ (h >>> 13)) >>> 0;
+    return ANSWERS[h % ANSWERS.length];
+  }
+
+  function start(m) {
+    mode = m;
+    current = ''; over = false;
+    if (m === 'daily') {
+      answer = dailyWord(today());
+      const saved = Kit.store.get('word:daily', null);
+      guesses = saved && saved.day === today() ? saved.guesses : [];
+    } else {
+      answer = Kit.pick(ANSWERS); guesses = [];
+    }
+    $('daily').classList.toggle('on', m === 'daily');
+    $('practice').classList.toggle('on', m === 'practice');
+    buildBoard();
+    guesses.forEach((g, r) => paintRow(r, g, false));
+    if (guesses.length && (guesses[guesses.length - 1] === answer || guesses.length >= 6)) {
+      over = true;
+      setTimeout(() => showStats(guesses[guesses.length - 1] === answer ? 'Already solved today!' : 'Today\'s word was ' + answer.toUpperCase()), 300);
+    }
+    paintKeys();
+  }
+
+  function buildBoard() {
+    const b = $('board');
+    b.innerHTML = '';
+    for (let r = 0; r < 6; r++) {
+      const row = document.createElement('div');
+      row.className = 'row';
+      for (let c = 0; c < 5; c++) { const t = document.createElement('div'); t.className = 'tile'; row.appendChild(t); }
+      b.appendChild(row);
+    }
+  }
+  function buildKeyboard() {
+    const kb = $('kb');
+    KEYS.forEach((row) => {
+      const r = document.createElement('div');
+      r.className = 'krow';
+      for (const ch of row) {
+        const k = document.createElement('button');
+        k.className = 'key' + (ch === '+' || ch === '-' ? ' wide' : '');
+        k.dataset.k = ch === '+' ? 'enter' : ch === '-' ? 'back' : ch;
+        k.textContent = ch === '+' ? 'Enter' : ch === '-' ? '⌫' : ch;
+        k.addEventListener('click', (e) => { e.currentTarget.blur(); press(k.dataset.k); });
+        r.appendChild(k);
+      }
+      kb.appendChild(r);
+    });
+  }
+
+  function score(guess) {
+    const res = Array(5).fill('absent'), left = {};
+    for (let i = 0; i < 5; i++) {
+      if (guess[i] === answer[i]) res[i] = 'correct';
+      else left[answer[i]] = (left[answer[i]] || 0) + 1;
+    }
+    for (let i = 0; i < 5; i++) if (res[i] !== 'correct' && left[guess[i]]) { res[i] = 'present'; left[guess[i]]--; }
+    return res;
+  }
+
+  function paintRow(r, word, animate) {
+    const tiles = $('board').children[r].children, res = score(word);
+    for (let i = 0; i < 5; i++) {
+      const t = tiles[i];
+      t.textContent = word[i];
+      if (!animate) { t.className = 'tile ' + res[i]; continue; }
+      setTimeout(() => { t.classList.add('flip'); Kit.beep(400 + i * 60, 0.05, 'sine', 0.03); }, i * 260);
+      setTimeout(() => { t.classList.add(res[i]); }, i * 260 + 250);
+    }
+  }
+  function paintKeys() {
+    const best = {};
+    for (const g of guesses) score(g).forEach((s, i) => { if (!best[g[i]] || RANK[s] > RANK[best[g[i]]]) best[g[i]] = s; });
+    document.querySelectorAll('.key').forEach((k) => {
+      k.classList.remove('correct', 'present', 'absent');
+      if (best[k.dataset.k]) k.classList.add(best[k.dataset.k]);
+    });
+  }
+  function drawCurrent() {
+    const row = $('board').children[guesses.length];
+    if (!row) return;
+    [...row.children].forEach((t, i) => { t.textContent = current[i] || ''; t.classList.toggle('filled', !!current[i]); });
+  }
+  function toast(msg, ms = 1400) {
+    const t = $('toast');
+    t.textContent = msg; t.classList.add('show');
+    clearTimeout(toast.h); toast.h = setTimeout(() => t.classList.remove('show'), ms);
+  }
+
+  function press(k) {
+    if (over || busy || Kit.overlayOpen) return;
+    if (k === 'back') { current = current.slice(0, -1); return drawCurrent(); }
+    if (k === 'enter') return submit();
+    if (/^[a-z]$/.test(k) && current.length < 5) { current += k; drawCurrent(); }
+  }
+  function submit() {
+    if (current.length < 5) {
+      const row = $('board').children[guesses.length];
+      row.classList.remove('shake'); void row.offsetWidth; row.classList.add('shake');
+      Kit.beep(160, 0.12, 'square', 0.03);
+      return toast('Not enough letters');
+    }
+    const r = guesses.length, g = current;
+    guesses.push(g); current = '';
+    if (mode === 'daily') Kit.store.set('word:daily', { day: today(), guesses });
+    busy = true;
+    paintRow(r, g, true);
+    setTimeout(() => {
+      busy = false;
+      paintKeys();
+      if (g === answer) finish(true, r);
+      else if (guesses.length >= 6) finish(false, r);
+    }, 5 * 260 + 300);
+  }
+
+  function finish(won, r) {
+    over = true;
+    const st = Kit.store.get('word:stats', { played: 0, wins: 0, streak: 0, max: 0, dist: [0, 0, 0, 0, 0, 0] });
+    st.played++;
+    if (won) { st.wins++; st.streak++; st.max = Math.max(st.max, st.streak); st.dist[r]++; } else st.streak = 0;
+    Kit.store.set('word:stats', st);
+    if (won) {
+      [...$('board').children[r].children].forEach((t, i) => setTimeout(() => t.classList.add('win'), i * 90));
+      [523, 659, 784, 1046].forEach((f, k) => setTimeout(() => Kit.beep(f, 0.15, 'triangle', 0.05), k * 110));
+    } else toast(answer.toUpperCase(), 3000);
+    setTimeout(() => showStats(won ? ['Genius!', 'Magnificent!', 'Impressive!', 'Splendid!', 'Great!', 'Phew!'][r] : 'The word was ' + answer.toUpperCase(), r), 1200);
+  }
+
+  function showStats(title, row) {
+    const st = Kit.store.get('word:stats', { played: 0, wins: 0, streak: 0, max: 0, dist: [0, 0, 0, 0, 0, 0] });
+    const maxD = Math.max(1, ...st.dist);
+    const dist = st.dist.map((n, i) => `<div>${i + 1}<span class="bar${i === row && over && guesses[guesses.length - 1] === answer ? ' hi' : ''}" style="width:${8 + (n / maxD) * 70}%">${n}</span></div>`).join('');
+    Kit.overlay({
+      title: title || 'Statistics',
+      html: `<div class="stats-row"><div><b>${st.played}</b>Played</div><div><b>${st.played ? Math.round((st.wins / st.played) * 100) : 0}</b>Win %</div><div><b>${st.streak}</b>Streak</div><div><b>${st.max}</b>Best</div></div><div class="dist">${dist}</div>`,
+      buttons: over ? [{ label: 'Play a practice word', onClick: () => start('practice') }, { label: 'Close', alt: true }] : [{ label: 'Close' }]
+    });
+  }
+
+  function fit() {
+    const kbH = Math.min(58, Math.max(42, window.innerHeight * 0.07));
+    document.documentElement.style.setProperty('--key', kbH + 'px');
+    const ah = window.innerHeight - $('bar').offsetHeight - kbH * 3 - 12 - 60;
+    const tile = Math.floor(Math.min((ah - 30) / 6, (window.innerWidth - 40) / 5.3, 62));
+    document.documentElement.style.setProperty('--tile', Math.max(30, tile) + 'px');
+  }
+
+  window.addEventListener('keydown', (e) => {
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.key === 'Enter') { if (!Kit.overlayOpen) press('enter'); return; }
+    if (e.key === 'Backspace') return press('back');
+    if (/^[a-zA-Z]$/.test(e.key)) press(e.key.toLowerCase());
+  });
+  $('daily').addEventListener('click', () => start('daily'));
+  $('practice').addEventListener('click', () => start('practice'));
+  $('stats').addEventListener('click', () => showStats());
+  window.addEventListener('resize', fit);
+
+  buildKeyboard();
+  fit();
+  start('daily');
+  if (!Kit.store.get('word:seenHelp', false)) {
+    Kit.store.set('word:seenHelp', true);
+    Kit.overlay({
+      title: 'Word Guess',
+      html: '<p>Guess the hidden 5-letter word in 6 tries. After each guess the tiles change colour:</p><p><b style="color:#4ade80">Green</b> = right letter, right spot<br><b style="color:#facc15">Yellow</b> = in the word, wrong spot<br><b style="color:#9aa3d6">Grey</b> = not in the word</p><p>Play the <b>Daily</b> word or unlimited <b>Practice</b> words.</p>',
+      buttons: [{ label: 'Let\'s go!' }]
+    });
+  }
+})();
+</script>
+</body>
+</html>

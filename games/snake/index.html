@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Snake</title>
+<link rel="stylesheet" href="../shared/kit.css">
+</head>
+<body>
+<script src="../shared/kit.js"></script>
+<script>
+(() => {
+  const ID = 'snake', N = 20, C = 30, TOP = 60, W = N * C, H = N * C + TOP;
+  const view = Kit.canvas(W, H), ctx = view.ctx;
+  const DIRS = { up: { x: 0, y: -1 }, down: { x: 0, y: 1 }, left: { x: -1, y: 0 }, right: { x: 1, y: 0 } };
+  const parts = new Kit.Particles();
+  let body, prevTail, dir, queue, food, bonus, eaten, score, stepTime, acc;
+  let best = Kit.getBest(ID), state = 'menu', deadT = 0, shake = 0, clock = 0;
+
+  const px = (c) => c.x * C + C / 2;
+  const py = (c) => TOP + c.y * C + C / 2;
+  const lerpP = (a, b, t) => ({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+
+  function reset() {
+    body = [{ x: 7, y: 10 }, { x: 6, y: 10 }, { x: 5, y: 10 }];
+    prevTail = { x: 4, y: 10 };
+    dir = DIRS.right; queue = []; score = 0; eaten = 0; acc = 0; stepTime = 1 / 8;
+    food = null; bonus = null;
+    food = freeCell();
+    parts.clear();
+  }
+
+  function freeCell() {
+    const free = [];
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+      if (body.some((s) => s.x === x && s.y === y)) continue;
+      if (food && food.x === x && food.y === y) continue;
+      if (bonus && bonus.x === x && bonus.y === y) continue;
+      free.push({ x, y });
+    }
+    return free.length ? Kit.pick(free) : null;
+  }
+
+  function turn(name) {
+    if (state !== 'play') return;
+    const d = DIRS[name];
+    const last = queue.length ? queue[queue.length - 1] : dir;
+    if (d === last || (d.x === -last.x && d.y === -last.y)) return;
+    if (queue.length < 3) queue.push(d);
+  }
+
+  function step() {
+    if (queue.length) dir = queue.shift();
+    const h = body[0], nh = { x: h.x + dir.x, y: h.y + dir.y };
+    const eat = food && nh.x === food.x && nh.y === food.y;
+    const eatBonus = bonus && nh.x === bonus.x && nh.y === bonus.y;
+    const grow = eat || eatBonus;
+    const hitSelf = body.some((s, i) => (grow || i < body.length - 1) && s.x === nh.x && s.y === nh.y);
+    if (nh.x < 0 || nh.y < 0 || nh.x >= N || nh.y >= N || hitSelf) return die();
+    body.unshift(nh);
+    prevTail = grow ? body[body.length - 1] : body.pop();
+    if (eat) {
+      score += 1; eaten++;
+      Kit.beep(620, 0.07, 'square', 0.05, 260);
+      parts.burst(px(nh), py(nh), 14, ['#ff5d73', '#ffb4c0', '#ffd257'], 170, 0.5, 4);
+      stepTime = 1 / Math.min(16, 8 + eaten * 0.25);
+      food = freeCell();
+      if (!food) return win();
+      if (eaten % 5 === 0 && !bonus) { const b = freeCell(); if (b) bonus = { x: b.x, y: b.y, t: 6 }; }
+    }
+    if (eatBonus) {
+      score += 5;
+      Kit.beep(880, 0.15, 'triangle', 0.06, 500);
+      parts.burst(px(nh), py(nh), 22, ['#ffd257', '#fff3b0'], 220, 0.7, 4);
+      bonus = null;
+    }
+  }
+
+  function die() {
+    state = 'dying'; deadT = 0.8; shake = 0.35;
+    Kit.noise(0.3, 0.1);
+    Kit.beep(220, 0.35, 'sawtooth', 0.05, -160);
+  }
+  function win() { state = 'over'; finish('You filled the board!'); }
+
+  function finish(title) {
+    const rec = Kit.submitBest(ID, score);
+    best = Kit.getBest(ID);
+    Kit.overlay({
+      title: title || 'Game Over',
+      html: `<div class="big">${score}</div><p>${rec ? '<span class="gold">New best score!</span>' : 'Best: ' + best}</p>`,
+      buttons: [{ label: 'Play again', onClick: start }]
+    });
+  }
+
+  function start() { reset(); state = 'play'; }
+
+  function pause() {
+    if (state !== 'play') return;
+    state = 'paused';
+    Kit.overlay({
+      title: 'Paused',
+      buttons: [{ label: 'Resume', onClick: () => { state = 'play'; } }, { label: 'Restart', alt: true, onClick: start }]
+    });
+  }
+
+  function menu() {
+    Kit.overlay({
+      title: 'Snake',
+      html: '<p>Eat apples to grow longer. Golden stars are worth 5 points but vanish fast. Don\'t hit the walls or your own tail!</p>',
+      buttons: [{ label: 'Play', onClick: start }],
+      keys: '<kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd> or <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> to steer<br>Swipe on touch screens · <kbd>P</kbd> to pause'
+    });
+  }
+
+  window.addEventListener('keydown', (e) => {
+    const m = { ArrowUp: 'up', KeyW: 'up', ArrowDown: 'down', KeyS: 'down', ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right' }[e.code];
+    if (m) turn(m);
+    if (e.code === 'KeyP' || e.code === 'Escape') pause();
+  });
+  window.addEventListener('blur', pause);
+  Kit.swipe(document.body, (d) => { if (d !== 'tap') turn(d); }, { continuous: true, min: 18 });
+
+  function update(dt) {
+    clock += dt;
+    if (state === 'play') {
+      acc += dt;
+      while (acc >= stepTime && state === 'play') { acc -= stepTime; step(); }
+      if (bonus) { bonus.t -= dt; if (bonus.t <= 0) bonus = null; }
+    } else if (state === 'dying') {
+      deadT -= dt;
+      if (deadT <= 0) { state = 'over'; finish(); }
+    }
+    shake = Math.max(0, shake - dt);
+    parts.update(dt);
+  }
+
+  function drawApple(c) {
+    const x = px(c), y = py(c), s = 1 + Math.sin(clock * 6) * 0.06;
+    ctx.save();
+    ctx.translate(x, y); ctx.scale(s, s);
+    ctx.fillStyle = 'rgba(0,0,0,.25)';
+    ctx.beginPath(); ctx.ellipse(0, 11, 10, 3.5, 0, 0, Math.PI * 2); ctx.fill();
+    const g = ctx.createRadialGradient(-4, -4, 2, 0, 0, 13);
+    g.addColorStop(0, '#ff8a9a'); g.addColorStop(1, '#e11d48');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(0, 1, 11, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#7c4a1e'; ctx.lineWidth = 2.5; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(0, -8); ctx.lineTo(1, -13); ctx.stroke();
+    ctx.fillStyle = '#4ade80';
+    ctx.beginPath(); ctx.ellipse(6, -12, 5, 2.6, -0.5, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
+
+  function drawStar(c) {
+    if (bonus.t < 2 && Math.floor(clock * 8) % 2) return;
+    const x = px(c), y = py(c);
+    ctx.save();
+    ctx.translate(x, y); ctx.rotate(clock * 2);
+    ctx.fillStyle = '#ffd257'; ctx.shadowColor = '#ffd257'; ctx.shadowBlur = 14;
+    ctx.beginPath();
+    for (let i = 0; i < 10; i++) {
+      const r = i % 2 ? 5.5 : 13, a = (i * Math.PI) / 5 - Math.PI / 2;
+      ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+    }
+    ctx.closePath(); ctx.fill();
+    ctx.restore();
+  }
+
+  function drawSnake() {
+    const t = state === 'play' ? Math.min(1, acc / stepTime) : 1;
+    const pts = [lerpP(body[1], body[0], t)];
+    for (let i = 1; i < body.length - 1; i++) pts.push(body[i]);
+    pts.push(lerpP(prevTail, body[body.length - 1], t));
+    const P = pts.map((p) => ({ x: px(p), y: py(p) }));
+    const dead = state === 'dying' || state === 'over';
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    for (const [w, col] of [[C * 0.82, dead ? '#7f1d1d' : '#14532d'], [C * 0.64, dead ? '#f87171' : '#4ade80'], [C * 0.2, dead ? '#fca5a5' : '#86efac']]) {
+      ctx.strokeStyle = col; ctx.lineWidth = w;
+      ctx.beginPath();
+      P.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+      ctx.stroke();
+    }
+    const h = P[0];
+    ctx.fillStyle = dead ? '#f87171' : '#4ade80';
+    ctx.strokeStyle = dead ? '#7f1d1d' : '#14532d'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(h.x, h.y, C * 0.44, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    const fx = dir.x, fy = dir.y, sx = -fy, sy = fx;
+    for (const side of [-1, 1]) {
+      const ex = h.x + fx * 5 + sx * side * 6.5, ey = h.y + fy * 5 + sy * side * 6.5;
+      ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(ex, ey, 4.6, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#0b1020'; ctx.beginPath(); ctx.arc(ex + fx * 1.6, ey + fy * 1.6, 2.4, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+
+  function draw() {
+    ctx.save();
+    if (shake > 0) ctx.translate(Kit.rand(-7, 7) * shake, Kit.rand(-7, 7) * shake);
+    ctx.fillStyle = '#0f1730'; ctx.fillRect(-10, -10, W + 20, H + 20);
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+      ctx.fillStyle = (x + y) % 2 ? '#16224a' : '#1a2853';
+      ctx.fillRect(x * C, TOP + y * C, C, C);
+    }
+    Kit.text(ctx, 'SCORE', 20, 20, { align: 'left', size: 12, color: '#8d96c7' });
+    Kit.text(ctx, String(score), 20, 42, { align: 'left', size: 24 });
+    Kit.text(ctx, 'BEST', W - 20, 20, { align: 'right', size: 12, color: '#8d96c7' });
+    Kit.text(ctx, String(Math.max(best, score)), W - 20, 42, { align: 'right', size: 24 });
+    Kit.text(ctx, 'SNAKE', W / 2, 31, { size: 26, weight: 800, color: '#86efac' });
+    if (food) drawApple(food);
+    if (bonus) drawStar(bonus);
+    drawSnake();
+    parts.draw(ctx);
+    ctx.restore();
+  }
+
+  reset();
+  menu();
+  Kit.loop((dt) => { update(dt); draw(); }).start();
+})();
+</script>
+</body>
+</html>

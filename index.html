@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PlayVault – Free Online Games</title>
+<meta name="description" content="Play free games in your browser. No downloads, no sign-ups, no subscriptions. Arcade, puzzle, card, board and learning games.">
+<meta name="theme-color" content="#0b1020">
+<link rel="icon" href="assets/img/logo.svg" type="image/svg+xml">
+<link rel="stylesheet" href="assets/css/site.css">
+</head>
+<body>
+<header class="header">
+  <a class="logo" href="./"><img src="assets/img/logo.svg" alt=""><span>Play<b>Vault</b></span></a>
+  <label class="search">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+    <input id="q" type="search" placeholder="Search games…" autocomplete="off" aria-label="Search games">
+  </label>
+  <a class="btn random-label" id="random" href="#" title="Play a random game">🎲 <span>Random</span></a>
+</header>
+
+<main class="wrap">
+  <section class="hero" id="hero">
+    <div>
+      <h1>Play <span>free games</span><br>right in your browser</h1>
+      <p>No downloads, no sign-ups, no subscriptions. Pick a game and start playing instantly — on a laptop, tablet or phone.</p>
+      <div class="cta">
+        <a class="btn primary" href="#games">Browse all games</a>
+        <a class="btn" id="random2" href="#">🎲 Surprise me</a>
+      </div>
+    </div>
+    <a class="featured" id="featured" href="#"></a>
+  </section>
+
+  <nav class="chips" id="chips" aria-label="Categories"></nav>
+
+  <section class="section" id="recentSec" hidden>
+    <div class="section-head"><h2>Continue playing</h2><span><a href="#" id="clearRecent">Clear</a></span></div>
+    <div class="row" id="recent"></div>
+  </section>
+
+  <section class="section" id="games">
+    <div class="section-head"><h2 id="gridTitle">All games</h2><span id="count"></span></div>
+    <div class="grid" id="grid"></div>
+  </section>
+</main>
+
+<footer class="footer">
+  All games run right in your browser · Best scores and saved games stay on this device · Made with HTML &amp; JavaScript
+</footer>
+
+<script src="assets/js/catalog.js"></script>
+<script src="assets/js/site.js"></script>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const params = new URLSearchParams(location.search);
+  let cat = params.get('cat') || 'all';
+  let query = params.get('q') || '';
+
+  document.title = SITE.name + ' – Free Online Games';
+  $('q').placeholder = `Search ${GAMES.length} games…`;
+  $('q').value = query;
+
+  // Game of the day
+  const day = Math.floor(Date.now() / 86400000);
+  const feat = GAMES[(day * 7) % GAMES.length];
+  $('featured').href = 'play.html?g=' + feat.id;
+  $('featured').style.setProperty('--c', feat.color);
+  $('featured').innerHTML = `<img src="assets/thumbs/${feat.id}.jpg" alt="" onerror="this.style.display='none'">
+    <div class="shade"></div>
+    <div class="info"><div><div class="label">⭐ Game of the day</div><h2>${PV.esc(feat.title)}</h2><p>${PV.esc(feat.desc)}</p></div>
+    <span class="btn primary">▶ Play</span></div>`;
+
+  function renderChips() {
+    const favs = PV.favs();
+    $('chips').innerHTML = CATEGORIES.map((c) => {
+      const n = c.id === 'all' ? GAMES.length : c.id === 'favs' ? favs.length : GAMES.filter((g) => g.tags.includes(c.id)).length;
+      return `<button class="chip${c.id === cat ? ' on' : ''}" data-cat="${c.id}">${c.icon} ${c.label} <small>${n}</small></button>`;
+    }).join('');
+  }
+
+  function matches(g) {
+    if (cat === 'favs' && !PV.isFav(g.id)) return false;
+    if (cat !== 'all' && cat !== 'favs' && !g.tags.includes(cat)) return false;
+    if (!query) return true;
+    const hay = (g.title + ' ' + g.desc + ' ' + g.tags.map(PV.tagLabel).join(' ')).toLowerCase();
+    return query.toLowerCase().split(/\s+/).every((w) => hay.includes(w));
+  }
+
+  function render() {
+    const list = GAMES.filter(matches);
+    const c = CATEGORIES.find((x) => x.id === cat) || CATEGORIES[0];
+    $('gridTitle').textContent = query ? `Results for “${query}”` : c.label;
+    $('count').textContent = list.length + (list.length === 1 ? ' game' : ' games');
+    $('grid').innerHTML = list.length ? list.map(PV.cardHTML).join('')
+      : `<div class="empty">${cat === 'favs' && !query ? 'No favourites yet — tap the ♡ on any game to save it here.' : 'No games found. Try a different search.'}</div>`;
+    const searching = !!query;
+    $('hero').hidden = searching;
+    const rec = PV.recents();
+    $('recentSec').hidden = searching || !rec.length || cat !== 'all';
+    $('recent').innerHTML = rec.map((id) => PV.cardHTML(PV.byId(id))).join('');
+    renderChips();
+    const u = new URL(location.href);
+    query ? u.searchParams.set('q', query) : u.searchParams.delete('q');
+    cat !== 'all' ? u.searchParams.set('cat', cat) : u.searchParams.delete('cat');
+    history.replaceState(null, '', u);
+  }
+
+  $('chips').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-cat]');
+    if (!b) return;
+    cat = b.dataset.cat;
+    render();
+  });
+  $('q').addEventListener('input', (e) => { query = e.target.value.trim(); render(); });
+  $('q').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { const first = document.querySelector('#grid .card'); if (first) location.href = first.href; }
+    if (e.key === 'Escape') { e.target.value = ''; query = ''; render(); }
+  });
+  const goRandom = (e) => { e.preventDefault(); location.href = 'play.html?g=' + PV.randomGame().id; };
+  $('random').addEventListener('click', goRandom);
+  $('random2').addEventListener('click', goRandom);
+  $('clearRecent').addEventListener('click', (e) => { e.preventDefault(); PV.set('recent', []); render(); });
+  document.addEventListener('pv:favs', () => { if (cat === 'favs') render(); else renderChips(); });
+  window.addEventListener('pageshow', (e) => { if (e.persisted) render(); });
+
+  render();
+})();
+</script>
+</body>
+</html>

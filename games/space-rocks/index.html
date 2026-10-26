@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Space Rocks</title>
+<link rel="stylesheet" href="../shared/kit.css">
+</head>
+<body>
+<script src="../shared/kit.js"></script>
+<script>
+(() => {
+  const ID = 'space-rocks', W = 800, H = 600;
+  const view = Kit.canvas(W, H), ctx = view.ctx;
+  const parts = new Kit.Particles();
+  const SIZES = { 3: { r: 46, score: 20 }, 2: { r: 26, score: 50 }, 1: { r: 14, score: 100 } };
+  const bgStars = [...Array(70)].map(() => ({ x: Kit.rand(0, W), y: Kit.rand(0, H), a: Kit.rand(0.2, 0.8) }));
+  let ship, rocks, shots, score, lives, level, fireT, nextLife, levelT, state = 'menu', best = Kit.getBest(ID), shake = 0, t = 0;
+
+  function wrap(o, m = 0) {
+    if (o.x < -m) o.x += W + m * 2; else if (o.x > W + m) o.x -= W + m * 2;
+    if (o.y < -m) o.y += H + m * 2; else if (o.y > H + m) o.y -= H + m * 2;
+  }
+  function newShip() { ship = { x: W / 2, y: H / 2, vx: 0, vy: 0, a: -Math.PI / 2, r: 13, inv: 2.5, thrust: false, dead: false }; }
+  function makeRock(size, x, y) {
+    const n = Kit.randInt(9, 13), r = SIZES[size].r;
+    const shape = [...Array(n)].map((_, i) => ({ a: (i / n) * Math.PI * 2, d: r * Kit.rand(0.72, 1.08) }));
+    const sp = Kit.rand(40, 100) * (1 + (level - 1) * 0.08) * (size === 1 ? 1.5 : size === 2 ? 1.2 : 1);
+    const a = Kit.rand(0, Math.PI * 2);
+    return { size, x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, r, rot: 0, vr: Kit.rand(-1, 1), shape };
+  }
+  function startLevel() {
+    rocks = [];
+    const n = Math.min(3 + level, 11);
+    for (let i = 0; i < n; i++) {
+      let x, y;
+      do { x = Kit.rand(0, W); y = Kit.rand(0, H); } while (Math.hypot(x - W / 2, y - H / 2) < 180);
+      rocks.push(makeRock(3, x, y));
+    }
+    levelT = 0;
+  }
+  function newGame() {
+    score = 0; lives = 3; level = 1; nextLife = 10000; shots = []; fireT = 0;
+    parts.clear(); newShip(); startLevel(); state = 'play';
+  }
+
+  function fire() {
+    if (ship.dead || fireT > 0 || shots.length >= 6) return;
+    fireT = 0.17;
+    shots.push({ x: ship.x + Math.cos(ship.a) * 16, y: ship.y + Math.sin(ship.a) * 16, vx: ship.vx + Math.cos(ship.a) * 620, vy: ship.vy + Math.sin(ship.a) * 620, life: 0.85 });
+    Kit.beep(900, 0.05, 'square', 0.025, -500);
+  }
+  function hyperspace() {
+    if (state !== 'play' || ship.dead) return;
+    ship.x = Kit.rand(40, W - 40); ship.y = Kit.rand(40, H - 40); ship.vx = ship.vy = 0;
+    parts.burst(ship.x, ship.y, 16, '#a5f3fc', 140, 0.5, 3);
+    Kit.beep(300, 0.25, 'sine', 0.05, 900);
+  }
+
+  function breakRock(rk) {
+    rk.dead = true;
+    score += SIZES[rk.size].score;
+    if (score >= nextLife) { lives++; nextLife += 10000; Kit.beep(1200, 0.2, 'triangle', 0.05); }
+    parts.burst(rk.x, rk.y, rk.size * 7, ['#cbd5e1', '#94a3b8', '#fde68a'], 60 + rk.size * 40, 0.8, 3);
+    Kit.noise(0.1 + rk.size * 0.08, 0.05 + rk.size * 0.02);
+    if (rk.size > 1) for (let i = 0; i < 2; i++) rocks.push(makeRock(rk.size - 1, rk.x, rk.y));
+  }
+
+  function crash() {
+    ship.dead = true; shake = 0.5; lives--;
+    parts.burst(ship.x, ship.y, 30, ['#a5f3fc', '#fff', '#fb923c'], 220, 1.1, 3);
+    Kit.noise(0.6, 0.14);
+    if (lives <= 0) {
+      state = 'over';
+      const rec = Kit.submitBest(ID, score);
+      best = Kit.getBest(ID);
+      setTimeout(() => Kit.overlay({
+        title: 'Game Over',
+        html: `<div class="big">${score.toLocaleString()}</div><p>Reached wave ${level}</p><p>${rec ? '<span class="gold">New best score!</span>' : 'Best: ' + best.toLocaleString()}</p>`,
+        buttons: [{ label: 'Play again', onClick: newGame }]
+      }), 1200);
+    } else setTimeout(() => { if (state === 'play' || state === 'paused') newShip(); }, 1500);
+  }
+
+  function update(dt) {
+    t += dt;
+    parts.update(dt);
+    shake = Math.max(0, shake - dt);
+    if (state === 'menu' || state === 'over') {
+      for (const r of rocks || []) { r.x += r.vx * dt; r.y += r.vy * dt; r.rot += r.vr * dt; wrap(r, r.r); }
+      return;
+    }
+    if (state !== 'play') return;
+    fireT = Math.max(0, fireT - dt);
+    if (!ship.dead) {
+      if (Kit.down('ArrowLeft', 'KeyA')) ship.a -= 4.6 * dt;
+      if (Kit.down('ArrowRight', 'KeyD')) ship.a += 4.6 * dt;
+      ship.thrust = Kit.down('ArrowUp', 'KeyW');
+      if (ship.thrust) {
+        ship.vx += Math.cos(ship.a) * 320 * dt; ship.vy += Math.sin(ship.a) * 320 * dt;
+        if (Math.random() < 0.6) parts.list.push({ x: ship.x - Math.cos(ship.a) * 12, y: ship.y - Math.sin(ship.a) * 12, vx: -Math.cos(ship.a) * 120 + Kit.rand(-30, 30), vy: -Math.sin(ship.a) * 120 + Kit.rand(-30, 30), life: 0.3, max: 0.3, size: 3, color: '#fb923c', g: 0 });
+      }
+      const damp = Math.exp(-0.55 * dt);
+      ship.vx *= damp; ship.vy *= damp;
+      const sp = Math.hypot(ship.vx, ship.vy);
+      if (sp > 420) { ship.vx *= 420 / sp; ship.vy *= 420 / sp; }
+      ship.x += ship.vx * dt; ship.y += ship.vy * dt; wrap(ship);
+      ship.inv = Math.max(0, ship.inv - dt);
+      if (Kit.down('Space', 'KeyJ')) fire();
+    }
+    for (const s of shots) { s.x += s.vx * dt; s.y += s.vy * dt; s.life -= dt; wrap(s); }
+    for (const r of rocks) { r.x += r.vx * dt; r.y += r.vy * dt; r.rot += r.vr * dt; wrap(r, r.r); }
+    for (const s of shots) for (const r of rocks) {
+      if (s.life <= 0 || r.dead) continue;
+      if ((s.x - r.x) ** 2 + (s.y - r.y) ** 2 < r.r * r.r) { s.life = 0; breakRock(r); }
+    }
+    if (!ship.dead && ship.inv <= 0) for (const r of rocks) {
+      if (!r.dead && (ship.x - r.x) ** 2 + (ship.y - r.y) ** 2 < (r.r * 0.85 + ship.r) ** 2) { breakRock(r); crash(); break; }
+    }
+    shots = shots.filter((s) => s.life > 0);
+    rocks = rocks.filter((r) => !r.dead);
+    if (!rocks.length && state === 'play') {
+      levelT += dt;
+      if (levelT > 1.8) { level++; startLevel(); if (!ship.dead) ship.inv = 2; }
+    }
+  }
+
+  function draw() {
+    ctx.save();
+    if (shake > 0) ctx.translate(Kit.rand(-8, 8) * shake, Kit.rand(-8, 8) * shake);
+    ctx.fillStyle = '#05071a'; ctx.fillRect(-10, -10, W + 20, H + 20);
+    for (const s of bgStars) { ctx.fillStyle = 'rgba(226,232,240,' + s.a + ')'; ctx.fillRect(s.x, s.y, 2, 2); }
+    ctx.lineJoin = 'round';
+    for (const r of rocks || []) {
+      ctx.save(); ctx.translate(r.x, r.y); ctx.rotate(r.rot);
+      ctx.beginPath();
+      r.shape.forEach((p, i) => { const x = Math.cos(p.a) * p.d, y = Math.sin(p.a) * p.d; i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(148,163,184,.12)'; ctx.fill();
+      ctx.strokeStyle = '#cbd5e1'; ctx.lineWidth = 2.5; ctx.shadowColor = '#94a3b8'; ctx.shadowBlur = 6; ctx.stroke();
+      ctx.restore();
+    }
+    ctx.fillStyle = '#fde68a'; ctx.shadowColor = '#facc15'; ctx.shadowBlur = 10;
+    for (const s of shots || []) { ctx.beginPath(); ctx.arc(s.x, s.y, 2.6, 0, Math.PI * 2); ctx.fill(); }
+    ctx.shadowBlur = 0;
+    if (ship && !ship.dead && state !== 'menu' && !(ship.inv > 0 && Math.floor(ship.inv * 10) % 2)) {
+      ctx.save(); ctx.translate(ship.x, ship.y); ctx.rotate(ship.a);
+      ctx.strokeStyle = '#a5f3fc'; ctx.lineWidth = 2.5; ctx.shadowColor = '#22d3ee'; ctx.shadowBlur = 12;
+      ctx.beginPath(); ctx.moveTo(18, 0); ctx.lineTo(-12, 11); ctx.lineTo(-7, 0); ctx.lineTo(-12, -11); ctx.closePath(); ctx.stroke();
+      if (ship.thrust && Math.random() < 0.8) {
+        ctx.strokeStyle = '#fb923c'; ctx.beginPath(); ctx.moveTo(-9, 5); ctx.lineTo(-20 - Math.random() * 8, 0); ctx.lineTo(-9, -5); ctx.stroke();
+      }
+      ctx.restore();
+    }
+    parts.draw(ctx);
+    if (state !== 'menu') {
+      Kit.text(ctx, score.toLocaleString(), 20, 26, { align: 'left', size: 22, weight: 800 });
+      Kit.text(ctx, 'WAVE ' + level, W / 2, 26, { size: 16, color: '#a5f3fc' });
+      for (let i = 0; i < lives; i++) {
+        ctx.save(); ctx.translate(W - 24 - i * 24, 26); ctx.rotate(-Math.PI / 2);
+        ctx.strokeStyle = '#a5f3fc'; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(10, 0); ctx.lineTo(-7, 6); ctx.lineTo(-4, 0); ctx.lineTo(-7, -6); ctx.closePath(); ctx.stroke();
+        ctx.restore();
+      }
+      if (rocks && !rocks.length && state === 'play') Kit.text(ctx, 'Wave ' + (level + 1), W / 2, H / 2, { size: 36, weight: 900, color: '#a5f3fc' });
+    }
+    ctx.restore();
+  }
+
+  function pause() {
+    if (state !== 'play') return;
+    state = 'paused';
+    Kit.overlay({ title: 'Paused', buttons: [{ label: 'Resume', onClick: () => { state = 'play'; } }, { label: 'Restart', alt: true, onClick: newGame }] });
+  }
+  window.addEventListener('keydown', (e) => {
+    if (e.code === 'KeyP' || e.code === 'Escape') pause();
+    if ((e.code === 'KeyH' || e.code === 'ShiftLeft' || e.code === 'KeyK') && !e.repeat) hyperspace();
+  });
+  window.addEventListener('blur', pause);
+  Kit.touchPad([
+    { label: '⟲', code: 'ArrowLeft', side: 'left' }, { label: '⟳', code: 'ArrowRight', side: 'left' },
+    { label: '▲', code: 'ArrowUp', side: 'right' }, { label: '●', code: 'Space', side: 'right' }
+  ]);
+
+  level = 1; startLevel();
+  Kit.overlay({
+    title: 'Space Rocks',
+    html: '<p>Blast the drifting space rocks. Big rocks split into smaller, faster ones. Clear them all to reach the next wave!</p>',
+    buttons: [{ label: 'Play', onClick: newGame }],
+    keys: '<kbd>←</kbd><kbd>→</kbd> turn · <kbd>↑</kbd> thrust · <kbd>Space</kbd> fire<br><kbd>H</kbd> hyperspace jump · <kbd>P</kbd> pause'
+  });
+  Kit.loop((dt) => { update(dt); draw(); }).start();
+})();
+</script>
+</body>
+</html>

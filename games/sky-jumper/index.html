@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Sky Jumper</title>
+<link rel="stylesheet" href="../shared/kit.css">
+</head>
+<body>
+<script src="../shared/kit.js"></script>
+<script>
+(() => {
+  const ID = 'sky-jumper', W = 400, H = 640, PW = 68, PH = 14, GRAV = 1300, JUMP = -760, SPRING = -1250;
+  const view = Kit.canvas(W, H), ctx = view.ctx;
+  const parts = new Kit.Particles();
+  let p, plats, camY, topY, height, score, state = 'menu', best = Kit.getBest(ID), t = 0, touchDir = 0;
+  const clouds = [...Array(7)].map(() => ({ x: Kit.rand(-40, W), y: Kit.rand(0, H), s: Kit.rand(0.5, 1.2), par: Kit.rand(0.15, 0.4) }));
+
+  function reset() {
+    p = { x: W / 2, y: H - 120, vx: 0, vy: JUMP, face: 1, squash: 0 };
+    plats = [{ x: W / 2 - PW / 2, y: H - 60, type: 'normal' }];
+    camY = 0; topY = H - 60; height = 0; score = 0;
+    while (topY > camY - H) addPlatforms();
+    parts.clear();
+  }
+
+  function addPlatforms() {
+    const h = Math.max(0, -topY) / 100;
+    const gap = Kit.rand(55, 85 + Math.min(h * 0.6, 70));
+    topY -= gap;
+    let type = 'normal';
+    const r = Math.random();
+    if (h > 15 && r < Math.min(0.35, h / 300)) type = 'moving';
+    else if (r < 0.06) type = 'spring';
+    else if (h > 40 && r < 0.18) type = 'vanish';
+    const pl = { x: Kit.rand(0, W - PW), y: topY, type, dir: Math.random() < 0.5 ? -1 : 1, sp: Kit.rand(60, 120) };
+    plats.push(pl);
+    if (h > 5 && Math.random() < 0.3) {
+      // a breaking decoy between safe platforms
+      plats.push({ x: Kit.rand(0, W - PW), y: topY + gap / 2, type: 'break' });
+    }
+  }
+
+  function update(dt) {
+    t += dt;
+    parts.update(dt);
+    if (state !== 'play') { if (state === 'menu') p.y = H - 120 + Math.sin(t * 3) * 6; return; }
+    let dir = touchDir;
+    if (Kit.down('ArrowLeft', 'KeyA')) dir = -1;
+    if (Kit.down('ArrowRight', 'KeyD')) dir = 1;
+    const target = dir * 380;
+    p.vx += (target - p.vx) * Math.min(1, dt * (dir ? 9 : 6));
+    if (dir) p.face = dir;
+    p.x += p.vx * dt;
+    if (p.x < -20) p.x += W + 40; else if (p.x > W + 20) p.x -= W + 40;
+    const prevY = p.y;
+    p.vy += GRAV * dt;
+    p.y += p.vy * dt;
+    p.squash = Math.max(0, p.squash - dt * 4);
+
+    for (const pl of plats) {
+      if (pl.type === 'moving') { pl.x += pl.dir * pl.sp * dt; if (pl.x < 0 || pl.x > W - PW) { pl.dir *= -1; pl.x = Kit.clamp(pl.x, 0, W - PW); } }
+      if (pl.falling) { pl.vy = (pl.vy || 0) + GRAV * dt; pl.y += pl.vy * dt; }
+    }
+    if (p.vy > 0) {
+      for (const pl of plats) {
+        if (pl.gone || pl.falling) continue;
+        const feetPrev = prevY + 18, feet = p.y + 18;
+        if (feetPrev <= pl.y && feet >= pl.y && p.x + 14 > pl.x && p.x - 14 < pl.x + PW) {
+          if (pl.type === 'break') { pl.falling = true; Kit.beep(160, 0.15, 'sawtooth', 0.04, -60); parts.burst(pl.x + PW / 2, pl.y, 8, '#a16207', 100, 0.5, 4, 600); continue; }
+          p.y = pl.y - 18;
+          const spring = pl.type === 'spring' && Math.abs(p.x - (pl.x + PW / 2)) < 22;
+          p.vy = spring ? SPRING : JUMP;
+          p.squash = 1;
+          if (spring) { pl.sprung = 0.3; Kit.beep(300, 0.25, 'triangle', 0.05, 900); } else Kit.beep(520, 0.06, 'sine', 0.05, 220);
+          if (pl.type === 'vanish') { pl.gone = true; parts.burst(pl.x + PW / 2, pl.y, 12, '#e0f2fe', 120, 0.5, 4); }
+          break;
+        }
+      }
+    }
+    for (const pl of plats) if (pl.sprung) pl.sprung = Math.max(0, pl.sprung - dt);
+    // camera follows upward only
+    const line = camY + H * 0.42;
+    if (p.y < line) camY = p.y - H * 0.42;
+    height = Math.max(height, Math.round((H - 120 - p.y) / 10));
+    score = height;
+    while (topY > camY - 120) addPlatforms();
+    plats = plats.filter((pl) => pl.y < camY + H + 80 && !pl.gone);
+    if (p.y - camY > H + 40) gameOver();
+  }
+
+  function gameOver() {
+    state = 'over';
+    Kit.beep(400, 0.6, 'sine', 0.05, -350);
+    const rec = Kit.submitBest(ID, score);
+    best = Kit.getBest(ID);
+    Kit.overlay({
+      title: 'You fell!',
+      html: `<div class="big">${score}</div><p>${rec ? '<span class="gold">New height record!</span>' : 'Best: ' + best}</p>`,
+      buttons: [{ label: 'Jump again', onClick: () => { reset(); state = 'play'; } }]
+    });
+  }
+
+  function drawPlat(pl) {
+    const x = pl.x, y = pl.y - camY;
+    const colors = { normal: ['#4ade80', '#15803d'], moving: ['#60a5fa', '#1d4ed8'], spring: ['#4ade80', '#15803d'], vanish: ['#f8fafc', '#94a3b8'], break: ['#d97706', '#78350f'] };
+    const [fill, edge] = colors[pl.type];
+    ctx.fillStyle = edge; Kit.rr(ctx, x, y + 3, PW, PH, 7); ctx.fill();
+    ctx.fillStyle = fill; Kit.rr(ctx, x, y, PW, PH - 2, 7); ctx.fill();
+    if (pl.type === 'break') {
+      ctx.strokeStyle = '#78350f'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(x + PW / 2 - 4, y); ctx.lineTo(x + PW / 2 + 3, y + 6); ctx.lineTo(x + PW / 2 - 2, y + PH); ctx.stroke();
+    }
+    if (pl.type === 'spring') {
+      const ext = pl.sprung ? 14 : 6, sx = x + PW / 2 - 9;
+      ctx.strokeStyle = '#64748b'; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(sx + 2, y); for (let i = 1; i <= 4; i++) ctx.lineTo(sx + (i % 2 ? 16 : 2), y - (ext * i) / 4); ctx.stroke();
+      ctx.fillStyle = '#ef4444'; Kit.rr(ctx, sx - 2, y - ext - 5, 22, 6, 3); ctx.fill();
+    }
+  }
+
+  function drawPlayer() {
+    const x = p.x, y = p.y - camY, sq = p.squash;
+    ctx.save(); ctx.translate(x, y); ctx.scale(1 + sq * 0.15, 1 - sq * 0.15);
+    ctx.strokeStyle = '#14532d'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+    for (const lx of [-7, 7]) { ctx.beginPath(); ctx.moveTo(lx, 10); ctx.lineTo(lx + (p.vy < 0 ? lx * 0.3 : 0), 18); ctx.stroke(); }
+    ctx.fillStyle = '#a3e635';
+    ctx.beginPath(); ctx.ellipse(0, -2, 17, 16, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(-6, -16); ctx.lineTo(-9, -26); ctx.moveTo(6, -16); ctx.lineTo(9, -26); ctx.stroke();
+    ctx.fillStyle = '#facc15'; ctx.beginPath(); ctx.arc(-9, -27, 3.5, 0, Math.PI * 2); ctx.arc(9, -27, 3.5, 0, Math.PI * 2); ctx.fill();
+    const f = p.face;
+    ctx.fillStyle = '#fff';
+    for (const ex of [-5, 6]) { ctx.beginPath(); ctx.arc(ex + f * 2, -5, 5, 0, Math.PI * 2); ctx.fill(); }
+    ctx.fillStyle = '#111';
+    for (const ex of [-5, 6]) { ctx.beginPath(); ctx.arc(ex + f * 4, -5 + (p.vy > 300 ? 2 : 0), 2.4, 0, Math.PI * 2); ctx.fill(); }
+    ctx.strokeStyle = '#14532d'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(f * 2, 4, 5, 0.15 * Math.PI, 0.85 * Math.PI); ctx.stroke();
+    ctx.restore();
+  }
+
+  function draw() {
+    const g = ctx.createLinearGradient(0, 0, 0, H);
+    const hue = Math.max(200, 220 - height / 200);
+    g.addColorStop(0, `hsl(${hue + 20},70%,${Math.max(18, 62 - height / 250)}%)`);
+    g.addColorStop(1, `hsl(${hue},80%,${Math.max(30, 82 - height / 300)}%)`);
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = 'rgba(255,255,255,.55)';
+    for (const c of clouds) {
+      let y = (c.y - camY * c.par) % (H + 120);
+      if (y < -60) y += H + 120;
+      ctx.beginPath(); ctx.arc(c.x, y, 20 * c.s, 0, Math.PI * 2); ctx.arc(c.x + 22 * c.s, y - 8 * c.s, 24 * c.s, 0, Math.PI * 2); ctx.arc(c.x + 46 * c.s, y, 18 * c.s, 0, Math.PI * 2); ctx.fill();
+    }
+    plats.forEach(drawPlat);
+    drawPlayer();
+    parts.draw(ctx);
+    Kit.text(ctx, String(score), 18, 30, { align: 'left', size: 28, weight: 900, stroke: 'rgba(0,0,0,.35)', strokeWidth: 5 });
+    Kit.text(ctx, 'BEST ' + Math.max(best, score), W - 16, 30, { align: 'right', size: 15, stroke: 'rgba(0,0,0,.35)', strokeWidth: 4 });
+  }
+
+  function pause() {
+    if (state !== 'play') return;
+    state = 'paused';
+    Kit.overlay({ title: 'Paused', buttons: [{ label: 'Resume', onClick: () => { state = 'play'; } }, { label: 'Restart', alt: true, onClick: () => { reset(); state = 'play'; } }] });
+  }
+  window.addEventListener('keydown', (e) => { if (e.code === 'KeyP' || e.code === 'Escape') pause(); });
+  window.addEventListener('blur', pause);
+  const held = new Map();
+  const upd = () => { let d = 0; for (const v of held.values()) d = v; touchDir = d; };
+  document.body.addEventListener('pointerdown', (e) => { if (state === 'play' && !Kit.overlayOpen) { held.set(e.pointerId, view.toLocal(e).x < W / 2 ? -1 : 1); upd(); } });
+  document.body.addEventListener('pointermove', (e) => { if (held.has(e.pointerId)) { held.set(e.pointerId, view.toLocal(e).x < W / 2 ? -1 : 1); upd(); } });
+  const rel = (e) => { held.delete(e.pointerId); upd(); };
+  window.addEventListener('pointerup', rel);
+  window.addEventListener('pointercancel', rel);
+
+  reset();
+  Kit.overlay({
+    title: 'Sky Jumper',
+    html: '<p>Bounce from platform to platform and climb as high as you can. Blue ones move, white ones vanish, cracked ones break and springs launch you up!</p>',
+    buttons: [{ label: 'Play', onClick: () => { reset(); state = 'play'; } }],
+    keys: '<kbd>←</kbd><kbd>→</kbd> or <kbd>A</kbd><kbd>D</kbd> to move · <kbd>P</kbd> pause<br>Touch: hold the left or right side'
+  });
+  Kit.loop((dt) => { update(dt); draw(); }).start();
+})();
+</script>
+</body>
+</html>
