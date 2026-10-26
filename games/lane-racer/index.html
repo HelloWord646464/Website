@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Lane Racer</title>
+<link rel="stylesheet" href="../shared/kit.css">
+</head>
+<body>
+<script src="../shared/kit.js"></script>
+<script>
+(() => {
+  const ID = 'lane-racer', W = 420, H = 700, RL = 50, RR = 370, LANES = 4, LW = (RR - RL) / LANES;
+  const view = Kit.canvas(W, H), ctx = view.ctx;
+  const parts = new Kit.Particles();
+  const CAR_COLORS = ['#3b82f6', '#22c55e', '#facc15', '#a855f7', '#f97316', '#14b8a6', '#e5e7eb'];
+  let car, traffic, coins, trees, speed, dist, score, coinCount, rowGap, roadOff, state = 'menu', best = Kit.getBest(ID), shake = 0, t = 0, touchDir = 0;
+
+  const laneX = (i) => RL + LW * i + LW / 2;
+  function reset() {
+    car = { x: laneX(1.5), y: 590, w: 44, h: 78, tilt: 0 };
+    traffic = []; coins = []; speed = 320; dist = 0; score = 0; coinCount = 0; rowGap = 300; roadOff = 0;
+    trees = [...Array(12)].map((_, i) => ({ side: i % 2, y: (i / 12) * H * 1.2, kind: Kit.randInt(0, 2), off: Kit.rand(4, 26) }));
+    parts.clear();
+  }
+
+  function spawnRow() {
+    const lanes = Kit.shuffle([0, 1, 2, 3]);
+    const blocked = speed > 480 && Math.random() < 0.45 ? 2 : Math.random() < 0.75 ? 1 : 2;
+    for (let i = 0; i < blocked; i++) {
+      traffic.push({ x: laneX(lanes[i]), y: -60 - Kit.rand(0, 40), w: 42, h: 74, v: 150, color: Kit.pick(CAR_COLORS), truck: Math.random() < 0.18 });
+    }
+    if (Math.random() < 0.55) {
+      const free = lanes[blocked];
+      for (let k = 0; k < 3; k++) coins.push({ x: laneX(free), y: -60 - k * 46 - 120 });
+    }
+    rowGap = Kit.rand(230, 330) + speed * 0.35;
+  }
+
+  function overlap(a, b, pad = 6) {
+    return Math.abs(a.x - b.x) * 2 < a.w + b.w - pad * 2 && Math.abs(a.y - b.y) * 2 < a.h + b.h - pad * 2;
+  }
+
+  function crash() {
+    state = 'over'; shake = 0.6;
+    Kit.noise(0.6, 0.15); Kit.beep(120, 0.4, 'sawtooth', 0.05, -60);
+    parts.burst(car.x, car.y - 20, 40, ['#f97316', '#facc15', '#ef4444', '#9ca3af'], 260, 1, 5);
+    const rec = Kit.submitBest(ID, score);
+    best = Kit.getBest(ID);
+    setTimeout(() => Kit.overlay({
+      title: 'Crash!',
+      html: `<div class="big">${score.toLocaleString()}</div><p>${Math.floor(dist / 100)} m driven · ${coinCount} coins</p><p>${rec ? '<span class="gold">New best score!</span>' : 'Best: ' + best.toLocaleString()}</p>`,
+      buttons: [{ label: 'Drive again', onClick: () => { reset(); state = 'play'; } }]
+    }), 900);
+  }
+
+  function update(dt) {
+    t += dt;
+    parts.update(dt);
+    shake = Math.max(0, shake - dt);
+    const sp = state === 'play' ? speed : state === 'menu' ? 200 : 0;
+    roadOff = (roadOff + sp * dt) % 80;
+    for (const tr of trees) { tr.y += sp * dt; if (tr.y > H + 60) tr.y -= H * 1.2; }
+    if (state !== 'play') return;
+    speed = Math.min(760, speed + 7 * dt);
+    dist += speed * dt;
+    let dir = touchDir;
+    if (Kit.down('ArrowLeft', 'KeyA')) dir = -1;
+    if (Kit.down('ArrowRight', 'KeyD')) dir = 1;
+    const steer = 260 + speed * 0.25;
+    car.x = Kit.clamp(car.x + dir * steer * dt, RL + car.w / 2 + 2, RR - car.w / 2 - 2);
+    car.tilt += (dir * 0.12 - car.tilt) * Math.min(1, dt * 10);
+    rowGap -= speed * dt;
+    if (rowGap <= 0) spawnRow();
+    for (const o of traffic) o.y += (speed - o.v) * dt;
+    traffic = traffic.filter((o) => o.y < H + 100);
+    for (const c of coins) {
+      c.y += speed * dt;
+      if (!c.got && Math.abs(c.x - car.x) < 34 && Math.abs(c.y - car.y) < 46) {
+        c.got = true; coinCount++; score += 50;
+        Kit.beep(990, 0.06, 'square', 0.035); setTimeout(() => Kit.beep(1480, 0.08, 'square', 0.035), 60);
+        parts.burst(c.x, c.y, 10, ['#facc15', '#fff7ae'], 140, 0.4, 3);
+      }
+    }
+    coins = coins.filter((c) => !c.got && c.y < H + 40);
+    score = Math.floor(dist / 10) + coinCount * 50;
+    for (const o of traffic) {
+      const box = o.truck ? { x: o.x, y: o.y - 18, w: o.w, h: o.h + 36 } : o;
+      if (overlap(car, box)) return crash();
+    }
+  }
+
+  function drawCar(x, y, w, h, color, player, tilt = 0, truck = false) {
+    ctx.save(); ctx.translate(x, y); ctx.rotate(tilt);
+    if (truck) h += 36;
+    ctx.fillStyle = 'rgba(0,0,0,.3)'; Kit.rr(ctx, -w / 2 + 4, -h / 2 + 6, w, h, 10); ctx.fill();
+    ctx.fillStyle = '#111827';
+    for (const [wx, wy] of [[-w / 2 - 3, -h / 2 + 12], [w / 2 - 5, -h / 2 + 12], [-w / 2 - 3, h / 2 - 26], [w / 2 - 5, h / 2 - 26]]) { Kit.rr(ctx, wx, wy, 8, 16, 3); ctx.fill(); }
+    ctx.fillStyle = color; Kit.rr(ctx, -w / 2, -h / 2, w, h, 10); ctx.fill();
+    if (truck) {
+      ctx.fillStyle = 'rgba(0,0,0,.15)'; Kit.rr(ctx, -w / 2 + 3, -h / 2 + 34, w - 6, h - 40, 6); ctx.fill();
+      ctx.fillStyle = '#93c5fd'; Kit.rr(ctx, -w / 2 + 6, -h / 2 + 6 + (player ? 0 : h - 34), w - 12, 14, 4); ctx.fill();
+    } else {
+      ctx.fillStyle = 'rgba(255,255,255,.25)'; Kit.rr(ctx, -w / 2 + 4, -h / 2 + 4, w - 8, 10, 5); ctx.fill();
+      ctx.fillStyle = '#1e293b';
+      const front = player ? -1 : 1;
+      Kit.rr(ctx, -w / 2 + 6, front * 14 - 8, w - 12, 16, 5); ctx.fill();
+      Kit.rr(ctx, -w / 2 + 7, -front * 22 - 6, w - 14, 12, 4); ctx.fill();
+    }
+    if (player) {
+      ctx.fillStyle = '#fff'; ctx.fillRect(-4, -h / 2 + 2, 3, h - 4); ctx.fillRect(2, -h / 2 + 2, 3, h - 4);
+      ctx.fillStyle = '#fde68a'; ctx.fillRect(-w / 2 + 5, -h / 2, 8, 4); ctx.fillRect(w / 2 - 13, -h / 2, 8, 4);
+    } else {
+      ctx.fillStyle = '#ef4444'; ctx.fillRect(-w / 2 + 5, -h / 2, 8, 4); ctx.fillRect(w / 2 - 13, -h / 2, 8, 4);
+    }
+    ctx.restore();
+  }
+
+  function draw() {
+    ctx.save();
+    if (shake > 0) ctx.translate(Kit.rand(-8, 8) * shake, Kit.rand(-8, 8) * shake);
+    ctx.fillStyle = '#16a34a'; ctx.fillRect(-10, -10, W + 20, H + 20);
+    ctx.fillStyle = '#15803d';
+    for (let y = -80 + roadOff; y < H; y += 80) { ctx.fillRect(0, y, RL - 10, 40); ctx.fillRect(RR + 10, y, W - RR, 40); }
+    for (const tr of trees) {
+      const x = tr.side ? RR + 12 + tr.off : RL - 12 - tr.off;
+      ctx.fillStyle = 'rgba(0,0,0,.2)'; ctx.beginPath(); ctx.arc(x + 4, tr.y + 4, 16, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = ['#166534', '#14532d', '#3f6212'][tr.kind]; ctx.beginPath(); ctx.arc(x, tr.y, 16, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,.12)'; ctx.beginPath(); ctx.arc(x - 5, tr.y - 5, 7, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.fillStyle = '#374151'; ctx.fillRect(RL - 8, 0, RR - RL + 16, H);
+    for (let y = -80 + roadOff; y < H; y += 40) {
+      ctx.fillStyle = Math.floor((y - roadOff) / 40) % 2 ? '#ef4444' : '#f9fafb';
+      ctx.fillRect(RL - 8, y, 6, 40); ctx.fillRect(RR + 2, y, 6, 40);
+    }
+    ctx.fillStyle = 'rgba(255,255,255,.75)';
+    for (let i = 1; i < LANES; i++) for (let y = -80 + roadOff; y < H; y += 80) ctx.fillRect(RL + i * LW - 2, y, 4, 40);
+    for (const c of coins) {
+      const sx = Math.abs(Math.cos(t * 5 + c.y * 0.02));
+      ctx.fillStyle = '#facc15'; ctx.strokeStyle = '#a16207'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.ellipse(c.x, c.y, 11 * sx + 1, 11, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    }
+    for (const o of traffic) drawCar(o.x, o.y, o.w, o.h, o.color, false, 0, o.truck);
+    if (state !== 'over') drawCar(car.x, car.y, car.w, car.h, '#dc2626', true, car.tilt);
+    parts.draw(ctx);
+    if (state !== 'menu') {
+      ctx.fillStyle = 'rgba(10,15,38,.75)'; Kit.rr(ctx, 10, 10, 150, 56, 12); ctx.fill(); Kit.rr(ctx, W - 146, 10, 136, 56, 12); ctx.fill();
+      Kit.text(ctx, 'SCORE', 24, 26, { align: 'left', size: 12, color: '#9aa3d6' });
+      Kit.text(ctx, score.toLocaleString(), 24, 48, { align: 'left', size: 22, weight: 800 });
+      Kit.text(ctx, 'SPEED', W - 132, 26, { align: 'left', size: 12, color: '#9aa3d6' });
+      Kit.text(ctx, Math.round(speed / 4) + ' km/h', W - 132, 48, { align: 'left', size: 18, weight: 800, color: '#fde68a' });
+    }
+    ctx.restore();
+  }
+
+  function pause() {
+    if (state !== 'play') return;
+    state = 'paused';
+    Kit.overlay({ title: 'Paused', buttons: [{ label: 'Resume', onClick: () => { state = 'play'; } }, { label: 'Restart', alt: true, onClick: () => { reset(); state = 'play'; } }] });
+  }
+  window.addEventListener('keydown', (e) => { if (e.code === 'KeyP' || e.code === 'Escape') pause(); });
+  window.addEventListener('blur', pause);
+  const held = new Map();
+  function updateTouch() { let d = 0; for (const v of held.values()) d = v; touchDir = d; }
+  document.body.addEventListener('pointerdown', (e) => {
+    if (Kit.overlayOpen || state !== 'play') return;
+    held.set(e.pointerId, view.toLocal(e).x < W / 2 ? -1 : 1); updateTouch();
+  });
+  document.body.addEventListener('pointermove', (e) => {
+    if (!held.has(e.pointerId)) return;
+    held.set(e.pointerId, view.toLocal(e).x < W / 2 ? -1 : 1); updateTouch();
+  });
+  const release = (e) => { held.delete(e.pointerId); updateTouch(); };
+  window.addEventListener('pointerup', release);
+  window.addEventListener('pointercancel', release);
+
+  reset();
+  Kit.overlay({
+    title: 'Lane Racer',
+    html: '<p>Weave through traffic as the speed keeps climbing. Grab coins for bonus points. One bump and it\'s game over!</p>',
+    buttons: [{ label: 'Drive', onClick: () => { reset(); state = 'play'; } }],
+    keys: '<kbd>←</kbd><kbd>→</kbd> or <kbd>A</kbd><kbd>D</kbd> to steer · <kbd>P</kbd> pause<br>Touch: hold the left or right side of the screen'
+  });
+  Kit.loop((dt) => { update(dt); draw(); }).start();
+})();
+</script>
+</body>
+</html>

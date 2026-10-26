@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Whack-a-Mole</title>
+<link rel="stylesheet" href="../shared/kit.css">
+<style>canvas { cursor: none; }</style>
+</head>
+<body>
+<script src="../shared/kit.js"></script>
+<script>
+(() => {
+  const ID = 'whack-a-mole', W = 600, H = 660, ROUND = 40;
+  const view = Kit.canvas(W, H), ctx = view.ctx;
+  const parts = new Kit.Particles();
+  const HOLES = [];
+  for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) HOLES.push({ x: 110 + c * 190, y: 270 + r * 150 });
+  const KEYMAP = { Numpad7: 0, Numpad8: 1, Numpad9: 2, Numpad4: 3, Numpad5: 4, Numpad6: 5, Numpad1: 6, Numpad2: 7, Numpad3: 8,
+    KeyQ: 0, KeyW: 1, KeyE: 2, KeyA: 3, KeyS: 4, KeyD: 5, KeyZ: 6, KeyX: 7, KeyC: 8 };
+  let moles, score, timeLeft, spawnT, elapsed, popups, hits, misses, state = 'menu', best = Kit.getBest(ID), t = 0, shake = 0;
+  let mouse = { x: W / 2, y: H / 2, swing: 0, show: false };
+
+  function reset() { moles = []; score = 0; timeLeft = ROUND; spawnT = 0.6; elapsed = 0; popups = []; hits = 0; misses = 0; parts.clear(); }
+
+  function spawn() {
+    const busy = new Set(moles.map((m) => m.hole));
+    const free = HOLES.map((_, i) => i).filter((i) => !busy.has(i));
+    if (!free.length) return;
+    const r = Math.random();
+    const type = elapsed > 4 && r < 0.13 ? 'bomb' : r > 0.9 ? 'gold' : 'mole';
+    const up = Math.max(0.5, 1.15 - elapsed * 0.014) * (type === 'gold' ? 0.65 : 1) * Kit.rand(0.85, 1.2);
+    moles.push({ hole: Kit.pick(free), type, h: 0, phase: 'rise', up, hit: false });
+  }
+
+  function whack(i) {
+    if (state !== 'play' || Kit.overlayOpen) return;
+    const m = moles.find((k) => k.hole === i && !k.hit && k.h > 0.35);
+    const hole = HOLES[i];
+    if (!m) { Kit.beep(140, 0.05, 'triangle', 0.04); misses++; return; }
+    m.hit = true; m.phase = 'sink';
+    if (m.type === 'bomb') {
+      score = Math.max(0, score - 5); shake = 0.4;
+      Kit.noise(0.4, 0.14);
+      parts.burst(hole.x, hole.y - 50, 30, ['#f97316', '#facc15', '#ef4444', '#334155'], 260, 0.7, 5);
+      popups.push({ x: hole.x, y: hole.y - 90, text: '-5', color: '#f87171', t: 0 });
+    } else {
+      const pts = m.type === 'gold' ? 3 : 1;
+      score += pts; hits++;
+      Kit.beep(m.type === 'gold' ? 880 : 520, 0.08, 'square', 0.05, 200);
+      parts.burst(hole.x, hole.y - 50, 12, m.type === 'gold' ? ['#facc15', '#fff7ae'] : ['#fde68a', '#fff', '#a16207'], 180, 0.45, 4);
+      popups.push({ x: hole.x, y: hole.y - 90, text: '+' + pts, color: m.type === 'gold' ? '#facc15' : '#fff', t: 0 });
+    }
+  }
+
+  function update(dt) {
+    t += dt;
+    parts.update(dt);
+    shake = Math.max(0, shake - dt);
+    mouse.swing = Math.max(0, mouse.swing - dt * 6);
+    popups = popups.filter((p) => (p.t += dt) < 0.8);
+    if (state !== 'play') return;
+    elapsed += dt;
+    timeLeft -= dt;
+    if (timeLeft <= 0) { timeLeft = 0; return end(); }
+    spawnT -= dt;
+    if (spawnT <= 0) {
+      spawn();
+      if (elapsed > 12 && Math.random() < 0.35) spawn();
+      spawnT = Math.max(0.32, 0.85 - elapsed * 0.012) * Kit.rand(0.7, 1.3);
+    }
+    for (const m of moles) {
+      if (m.phase === 'rise') { m.h += dt / 0.12; if (m.h >= 1) { m.h = 1; m.phase = 'up'; } }
+      else if (m.phase === 'up') { m.up -= dt; if (m.up <= 0) m.phase = 'sink'; }
+      else { m.h -= dt / (m.hit ? 0.25 : 0.14); }
+    }
+    moles = moles.filter((m) => m.h > 0 || m.phase === 'rise');
+  }
+
+  function end() {
+    state = 'over';
+    moles = [];
+    const rec = Kit.submitBest(ID, score);
+    best = Kit.getBest(ID);
+    const acc = hits + misses ? Math.round((hits / (hits + misses)) * 100) : 0;
+    Kit.beep(660, 0.12, 'triangle', 0.05); setTimeout(() => Kit.beep(440, 0.25, 'triangle', 0.05), 130);
+    Kit.overlay({
+      title: "Time's up!",
+      html: `<div class="big">${score}</div><p>${hits} moles whacked · ${acc}% accuracy</p><p>${rec ? '<span class="gold">New best score!</span>' : 'Best: ' + best}</p>`,
+      buttons: [{ label: 'Play again', onClick: () => { reset(); state = 'play'; } }]
+    });
+  }
+
+  function drawMole(m, hole) {
+    const lift = m.h * 92;
+    ctx.save();
+    ctx.beginPath(); ctx.rect(hole.x - 80, hole.y - 160, 160, 160); ctx.clip();
+    ctx.translate(hole.x, hole.y + 50 - lift);
+    if (m.type === 'bomb') {
+      ctx.fillStyle = '#1f2937'; ctx.beginPath(); ctx.arc(0, -10, 38, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,.18)'; ctx.beginPath(); ctx.arc(-12, -22, 10, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#4b5563'; ctx.fillRect(-8, -56, 16, 10);
+      ctx.strokeStyle = '#a16207'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(0, -56); ctx.quadraticCurveTo(10, -70, 18, -64); ctx.stroke();
+      ctx.fillStyle = Math.floor(t * 12) % 2 ? '#facc15' : '#f97316'; ctx.beginPath(); ctx.arc(19, -65, 5, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+      return;
+    }
+    const gold = m.type === 'gold';
+    const body = gold ? '#facc15' : '#8b5a2b', dark = gold ? '#ca8a04' : '#6b4220';
+    ctx.fillStyle = body; ctx.strokeStyle = dark; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(-44, 60); ctx.lineTo(-44, -10); ctx.arc(0, -10, 44, Math.PI, 0); ctx.lineTo(44, 60); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = gold ? '#fef08a' : '#d6a77a'; ctx.beginPath(); ctx.ellipse(0, 18, 28, 30, 0, 0, Math.PI * 2); ctx.fill();
+    if (m.hit) {
+      ctx.strokeStyle = '#1c1917'; ctx.lineWidth = 3;
+      for (const ex of [-15, 15]) { ctx.beginPath(); ctx.moveTo(ex - 6, -24); ctx.lineTo(ex + 6, -12); ctx.moveTo(ex + 6, -24); ctx.lineTo(ex - 6, -12); ctx.stroke(); }
+      ctx.fillStyle = '#fde68a';
+      for (let k = 0; k < 3; k++) { const a = t * 6 + (k * Math.PI * 2) / 3; Kit.text(ctx, '★', Math.cos(a) * 34, -58 + Math.sin(a) * 8, { size: 16, color: '#facc15' }); }
+    } else {
+      for (const ex of [-15, 15]) {
+        ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(ex, -18, 9, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#1c1917'; ctx.beginPath(); ctx.arc(ex + 2, -16, 4.5, 0, Math.PI * 2); ctx.fill();
+      }
+    }
+    ctx.fillStyle = '#f472b6'; ctx.beginPath(); ctx.ellipse(0, -2, 10, 7, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.fillRect(-7, 6, 6, 9); ctx.fillRect(1, 6, 6, 9);
+    if (gold) Kit.text(ctx, '✦', 30, -44, { size: 16, color: '#fff' });
+    ctx.restore();
+  }
+
+  function drawHammer() {
+    if (!mouse.show) return;
+    ctx.save(); ctx.translate(mouse.x, mouse.y); ctx.rotate(-0.5 + mouse.swing * 1.0);
+    ctx.fillStyle = '#92400e'; Kit.rr(ctx, -5, -6, 10, 70, 4); ctx.fill();
+    ctx.fillStyle = '#ef4444'; Kit.rr(ctx, -30, -34, 60, 32, 8); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,.3)'; Kit.rr(ctx, -26, -30, 52, 8, 4); ctx.fill();
+    ctx.restore();
+  }
+
+  function draw() {
+    ctx.save();
+    if (shake > 0) ctx.translate(Kit.rand(-8, 8) * shake, Kit.rand(-8, 8) * shake);
+    const g = ctx.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, '#4ade80'); g.addColorStop(1, '#15803d');
+    ctx.fillStyle = g; ctx.fillRect(-10, -10, W + 20, H + 20);
+    ctx.fillStyle = 'rgba(255,255,255,.07)';
+    for (let i = 0; i < 40; i++) { const x = (i * 137) % W, y = 130 + ((i * 89) % (H - 140)); ctx.fillRect(x, y, 3, 8); ctx.fillRect(x + 5, y + 2, 3, 6); }
+    // HUD
+    ctx.fillStyle = 'rgba(10,15,38,.82)'; ctx.fillRect(0, 0, W, 96);
+    Kit.text(ctx, 'SCORE', 24, 26, { align: 'left', size: 12, color: '#9aa3d6' });
+    Kit.text(ctx, String(score), 24, 56, { align: 'left', size: 34, weight: 900 });
+    Kit.text(ctx, 'BEST', W - 24, 26, { align: 'right', size: 12, color: '#9aa3d6' });
+    Kit.text(ctx, String(Math.max(best, score)), W - 24, 56, { align: 'right', size: 34, weight: 900 });
+    Kit.text(ctx, Math.ceil(timeLeft || ROUND) + 's', W / 2, 44, { size: 30, weight: 900, color: timeLeft < 6 && state === 'play' ? '#f87171' : '#fde68a' });
+    ctx.fillStyle = 'rgba(255,255,255,.15)'; Kit.rr(ctx, 150, 74, W - 300, 8, 4); ctx.fill();
+    ctx.fillStyle = '#fde68a'; Kit.rr(ctx, 150, 74, (W - 300) * ((timeLeft || ROUND) / ROUND), 8, 4); ctx.fill();
+    for (let i = 0; i < HOLES.length; i++) {
+      const h = HOLES[i];
+      ctx.fillStyle = '#3f2a16'; ctx.beginPath(); ctx.ellipse(h.x, h.y, 70, 26, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#1c1209'; ctx.beginPath(); ctx.ellipse(h.x, h.y + 2, 60, 20, 0, 0, Math.PI * 2); ctx.fill();
+      for (const m of moles || []) if (m.hole === i) drawMole(m, h);
+      ctx.fillStyle = '#6b4423';
+      ctx.beginPath(); ctx.ellipse(h.x, h.y, 70, 26, 0, 0, Math.PI); ctx.ellipse(h.x, h.y + 2, 60, 20, 0, Math.PI, 0, true); ctx.fill();
+    }
+    parts.draw(ctx);
+    for (const p of popups) {
+      ctx.globalAlpha = 1 - p.t / 0.8;
+      Kit.text(ctx, p.text, p.x, p.y - p.t * 50, { size: 30, weight: 900, color: p.color, stroke: '#0b1124', strokeWidth: 5 });
+      ctx.globalAlpha = 1;
+    }
+    drawHammer();
+    ctx.restore();
+  }
+
+  function holeAt(p) {
+    let bestI = -1, bestD = Infinity;
+    HOLES.forEach((h, i) => {
+      const dx = p.x - h.x, dy = p.y - (h.y - 40);
+      const d = dx * dx + dy * dy * 0.6;
+      if (Math.abs(dx) < 80 && p.y > h.y - 140 && p.y < h.y + 40 && d < bestD) { bestD = d; bestI = i; }
+    });
+    return bestI;
+  }
+  view.canvas.addEventListener('pointermove', (e) => { const p = view.toLocal(e); mouse.x = p.x; mouse.y = p.y; mouse.show = e.pointerType === 'mouse'; });
+  view.canvas.addEventListener('pointerleave', () => { mouse.show = false; });
+  view.canvas.addEventListener('pointerdown', (e) => {
+    const p = view.toLocal(e);
+    mouse.x = p.x; mouse.y = p.y; mouse.swing = 1; mouse.show = e.pointerType === 'mouse';
+    const i = holeAt(p);
+    if (i >= 0) whack(i); else if (state === 'play') misses++;
+  });
+  window.addEventListener('keydown', (e) => { if (e.code in KEYMAP && !e.repeat) whack(KEYMAP[e.code]); });
+
+  reset();
+  Kit.overlay({
+    title: 'Whack-a-Mole',
+    html: `<p>Bop as many moles as you can in ${ROUND} seconds! Golden moles are worth 3 points. Don't hit the bombs — they cost you 5!</p>`,
+    buttons: [{ label: 'Play', onClick: () => { reset(); state = 'play'; } }],
+    keys: 'Click / tap the moles<br>Keyboard: <kbd>Q</kbd><kbd>W</kbd><kbd>E</kbd> / <kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> / <kbd>Z</kbd><kbd>X</kbd><kbd>C</kbd> or the number pad'
+  });
+  Kit.loop((dt) => { update(dt); draw(); }).start();
+})();
+</script>
+</body>
+</html>

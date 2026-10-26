@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Minesweeper</title>
+<link rel="stylesheet" href="../shared/kit.css">
+<style>
+  body { flex-direction: column; gap: 12px; }
+  #face { font-size: 22px; padding: 4px 12px; }
+  canvas { box-shadow: 0 10px 40px rgba(0, 0, 0, .45); border-radius: 8px; cursor: pointer; }
+</style>
+</head>
+<body>
+<div class="kit-bar" id="bar">
+  <select class="kit-select" id="diff" aria-label="Difficulty">
+    <option value="easy">Easy 9×9</option>
+    <option value="medium">Medium 16×16</option>
+    <option value="hard">Hard 30×16</option>
+  </select>
+  <div class="kit-stat">Mines<b id="mines">10</b></div>
+  <button class="kit-small" id="face" title="New game">🙂</button>
+  <div class="kit-stat">Time<b id="time">0</b></div>
+  <button class="kit-small" id="flagMode" title="When on, taps place flags">🚩 Flag: off</button>
+</div>
+<canvas id="board"></canvas>
+<div class="kit-keys" id="help" style="margin:0">Click to dig · Right-click or long-press to flag · Click a number to open around it</div>
+<script src="../shared/kit.js"></script>
+<script>
+(() => {
+  const DIFFS = { easy: { c: 9, r: 9, m: 10 }, medium: { c: 16, r: 16, m: 40 }, hard: { c: 30, r: 16, m: 99 } };
+  const NUM = ['', '#60a5fa', '#4ade80', '#f87171', '#c084fc', '#fb923c', '#2dd4bf', '#f472b6', '#e5e7eb'];
+  const canvas = document.getElementById('board'), ctx = canvas.getContext('2d');
+  const $ = (id) => document.getElementById(id);
+  let diff = Kit.store.get('mines:diff', 'easy'), D, grid, started, over, won, flags, opened, time, flagMode = false, hover = null, exploded = null, cs = 32;
+
+  function newGame() {
+    D = DIFFS[diff];
+    grid = [...Array(D.r)].map(() => [...Array(D.c)].map(() => ({ mine: false, n: 0, open: false, flag: false })));
+    started = false; over = false; won = false; flags = 0; opened = 0; time = 0; exploded = null;
+    $('face').textContent = '🙂';
+    updateStats(); fit();
+  }
+  const inB = (r, c) => r >= 0 && r < D.r && c >= 0 && c < D.c;
+  function neighbors(r, c) {
+    const out = [];
+    for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) if ((dr || dc) && inB(r + dr, c + dc)) out.push([r + dr, c + dc]);
+    return out;
+  }
+  function placeMines(sr, sc) {
+    const safe = new Set([sr * D.c + sc, ...neighbors(sr, sc).map(([r, c]) => r * D.c + c)]);
+    let cells = [];
+    for (let i = 0; i < D.r * D.c; i++) if (!safe.has(i)) cells.push(i);
+    if (cells.length < D.m) cells = [...Array(D.r * D.c).keys()].filter((i) => i !== sr * D.c + sc);
+    Kit.shuffle(cells).slice(0, D.m).forEach((i) => { grid[Math.floor(i / D.c)][i % D.c].mine = true; });
+    for (let r = 0; r < D.r; r++) for (let c = 0; c < D.c; c++) grid[r][c].n = neighbors(r, c).filter(([a, b]) => grid[a][b].mine).length;
+    started = true;
+  }
+
+  function reveal(r, c) {
+    const cell = grid[r][c];
+    if (cell.open || cell.flag) return;
+    if (cell.mine) return lose(r, c);
+    const stack = [[r, c]];
+    while (stack.length) {
+      const [a, b] = stack.pop();
+      const k = grid[a][b];
+      if (k.open || k.flag) continue;
+      k.open = true; opened++;
+      if (k.n === 0) for (const nb of neighbors(a, b)) if (!grid[nb[0]][nb[1]].open) stack.push(nb);
+    }
+  }
+  function chord(r, c) {
+    const cell = grid[r][c];
+    if (!cell.open || !cell.n) return;
+    const nb = neighbors(r, c);
+    if (nb.filter(([a, b]) => grid[a][b].flag).length !== cell.n) return;
+    for (const [a, b] of nb) if (!grid[a][b].flag && !grid[a][b].open) { reveal(a, b); if (over) return; }
+  }
+  function open(r, c) {
+    if (over) return;
+    if (!started) placeMines(r, c);
+    const cell = grid[r][c];
+    if (cell.open) chord(r, c); else reveal(r, c);
+    if (!over) {
+      Kit.beep(500, 0.03, 'sine', 0.03);
+      if (opened === D.r * D.c - D.m) win();
+    }
+    updateStats(); draw();
+  }
+  function toggleFlag(r, c) {
+    if (over) return;
+    const cell = grid[r][c];
+    if (cell.open) { chord(r, c); updateStats(); draw(); return; }
+    cell.flag = !cell.flag;
+    flags += cell.flag ? 1 : -1;
+    Kit.beep(cell.flag ? 700 : 400, 0.04, 'triangle', 0.04);
+    updateStats(); draw();
+  }
+
+  function lose(r, c) {
+    over = true; exploded = [r, c];
+    $('face').textContent = '😵';
+    Kit.noise(0.5, 0.14);
+    draw();
+    setTimeout(() => Kit.overlay({
+      title: 'Boom!',
+      html: '<p>You hit a mine. Better luck next time!</p>',
+      buttons: [{ label: 'Try again', onClick: newGame }, { label: 'Look at board', alt: true }]
+    }), 700);
+  }
+  function win() {
+    over = true; won = true;
+    for (const row of grid) for (const k of row) if (k.mine && !k.flag) { k.flag = true; flags++; }
+    $('face').textContent = '😎';
+    [523, 659, 784, 1046].forEach((f, i) => setTimeout(() => Kit.beep(f, 0.15, 'triangle', 0.05), i * 110));
+    const secs = Math.floor(time);
+    const rec = Kit.submitBest('minesweeper:' + diff, secs, true);
+    const best = Kit.getBest('minesweeper:' + diff, secs);
+    setTimeout(() => Kit.overlay({
+      title: 'You cleared it! 🎉',
+      html: `<div class="big">${Kit.fmtTime(secs)}</div><p>${rec ? '<span class="gold">New best time!</span>' : 'Best time: ' + Kit.fmtTime(best)}</p>`,
+      buttons: [{ label: 'Play again', onClick: newGame }]
+    }), 500);
+  }
+
+  function updateStats() {
+    $('mines').textContent = D.m - flags;
+    $('time').textContent = Math.floor(time);
+    $('flagMode').textContent = '🚩 Flag: ' + (flagMode ? 'on' : 'off');
+    $('flagMode').classList.toggle('on', flagMode);
+  }
+
+  function fit() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const aw = window.innerWidth - 20, ah = window.innerHeight - $('bar').offsetHeight - $('help').offsetHeight - 52;
+    cs = Math.max(12, Math.floor(Math.min(aw / D.c, ah / D.r, 44)));
+    canvas.style.width = cs * D.c + 'px'; canvas.style.height = cs * D.r + 'px';
+    canvas.width = cs * D.c * dpr; canvas.height = cs * D.r * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    draw();
+  }
+
+  function drawMine(x, y) {
+    const cx = x + cs / 2, cy = y + cs / 2, r = cs * 0.24;
+    ctx.strokeStyle = '#0b1020'; ctx.lineWidth = Math.max(1.5, cs * 0.07);
+    for (let i = 0; i < 4; i++) {
+      const a = (i * Math.PI) / 4;
+      ctx.beginPath(); ctx.moveTo(cx - Math.cos(a) * r * 1.5, cy - Math.sin(a) * r * 1.5); ctx.lineTo(cx + Math.cos(a) * r * 1.5, cy + Math.sin(a) * r * 1.5); ctx.stroke();
+    }
+    ctx.fillStyle = '#0b1020'; ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(cx - r * 0.35, cy - r * 0.35, r * 0.25, 0, Math.PI * 2); ctx.fill();
+  }
+  function drawFlag(x, y) {
+    ctx.fillStyle = '#e2e8f0'; ctx.fillRect(x + cs * 0.46, y + cs * 0.2, Math.max(1.5, cs * 0.06), cs * 0.58);
+    ctx.fillStyle = '#ef4444';
+    ctx.beginPath(); ctx.moveTo(x + cs * 0.5, y + cs * 0.2); ctx.lineTo(x + cs * 0.78, y + cs * 0.34); ctx.lineTo(x + cs * 0.5, y + cs * 0.48); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#e2e8f0'; ctx.fillRect(x + cs * 0.3, y + cs * 0.76, cs * 0.4, Math.max(2, cs * 0.07));
+  }
+
+  function draw() {
+    if (!grid) return;
+    ctx.fillStyle = '#0f1730'; ctx.fillRect(0, 0, cs * D.c, cs * D.r);
+    for (let r = 0; r < D.r; r++) for (let c = 0; c < D.c; c++) {
+      const k = grid[r][c], x = c * cs, y = r * cs;
+      const showMine = over && k.mine && !k.flag;
+      if (k.open || showMine) {
+        const boom = exploded && exploded[0] === r && exploded[1] === c;
+        ctx.fillStyle = boom ? '#ef4444' : (r + c) % 2 ? '#1a2349' : '#1d274f';
+        ctx.fillRect(x, y, cs, cs);
+        if (k.mine) drawMine(x, y);
+        else if (k.n) Kit.text(ctx, String(k.n), x + cs / 2, y + cs / 2 + 1, { size: cs * 0.58, weight: 800, color: NUM[k.n] });
+      } else {
+        const hov = hover && hover[0] === r && hover[1] === c && !over;
+        ctx.fillStyle = hov ? '#5b6bb5' : (r + c) % 2 ? '#3f4c8a' : '#445393';
+        ctx.fillRect(x, y, cs, cs);
+        ctx.fillStyle = 'rgba(255,255,255,.14)'; ctx.fillRect(x, y, cs, Math.max(2, cs * 0.1)); ctx.fillRect(x, y, Math.max(2, cs * 0.1), cs);
+        ctx.fillStyle = 'rgba(0,0,0,.22)'; ctx.fillRect(x, y + cs - Math.max(2, cs * 0.1), cs, Math.max(2, cs * 0.1)); ctx.fillRect(x + cs - Math.max(2, cs * 0.1), y, Math.max(2, cs * 0.1), cs);
+        if (k.flag) {
+          drawFlag(x, y);
+          if (over && !won && !k.mine) { ctx.strokeStyle = '#fbbf24'; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.moveTo(x + 5, y + 5); ctx.lineTo(x + cs - 5, y + cs - 5); ctx.moveTo(x + cs - 5, y + 5); ctx.lineTo(x + 5, y + cs - 5); ctx.stroke(); }
+        }
+      }
+    }
+  }
+
+  /* ----- input ----- */
+  function cellAt(e) {
+    const rect = canvas.getBoundingClientRect();
+    const c = Math.floor((e.clientX - rect.left) / cs), r = Math.floor((e.clientY - rect.top) / cs);
+    return inB(r, c) ? [r, c] : null;
+  }
+  let press = null;
+  canvas.addEventListener('pointerdown', (e) => {
+    if (Kit.overlayOpen) return;
+    const cell = cellAt(e);
+    if (!cell) return;
+    press = { cell, button: e.button, long: false, id: e.pointerId };
+    if (e.pointerType !== 'mouse') {
+      press.timer = setTimeout(() => { if (press) { press.long = true; toggleFlag(...press.cell); if (navigator.vibrate) navigator.vibrate(30); } }, 380);
+    }
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    const cell = cellAt(e);
+    if (e.pointerType === 'mouse') { hover = cell; draw(); }
+    if (press && (!cell || cell[0] !== press.cell[0] || cell[1] !== press.cell[1])) { clearTimeout(press.timer); press = null; }
+  });
+  canvas.addEventListener('pointerleave', () => { hover = null; draw(); });
+  canvas.addEventListener('pointerup', (e) => {
+    if (!press || e.pointerId !== press.id) return;
+    clearTimeout(press.timer);
+    const p = press; press = null;
+    if (p.long) return;
+    if (p.button === 2) toggleFlag(...p.cell);
+    else if (p.button === 1) chord(...p.cell);
+    else if (flagMode && !grid[p.cell[0]][p.cell[1]].open) toggleFlag(...p.cell);
+    else open(...p.cell);
+  });
+  canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+  $('face').addEventListener('click', newGame);
+  $('flagMode').addEventListener('click', () => { flagMode = !flagMode; updateStats(); });
+  $('diff').value = diff;
+  $('diff').addEventListener('change', (e) => { diff = e.target.value; Kit.store.set('mines:diff', diff); newGame(); });
+  window.addEventListener('keydown', (e) => { if (e.code === 'KeyF') { flagMode = !flagMode; updateStats(); } if (e.code === 'KeyR') newGame(); });
+  window.addEventListener('resize', fit);
+  setInterval(() => { if (started && !over && document.visibilityState === 'visible') { time += 0.25; $('time').textContent = Math.floor(time); } }, 250);
+
+  newGame();
+})();
+</script>
+</body>
+</html>

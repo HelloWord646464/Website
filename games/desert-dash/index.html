@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Desert Dash</title>
+<link rel="stylesheet" href="../shared/kit.css">
+</head>
+<body>
+<script src="../shared/kit.js"></script>
+<script>
+(() => {
+  const ID = 'desert-dash', W = 800, H = 320, GY = 262;
+  const view = Kit.canvas(W, H), ctx = view.ctx;
+  const parts = new Kit.Particles();
+  const mesas = [...Array(5)].map((_, i) => ({ x: i * 220 + Kit.rand(0, 80), w: Kit.rand(90, 160), h: Kit.rand(40, 80) }));
+  const dunes = [...Array(6)].map((_, i) => ({ x: i * 170, r: Kit.rand(80, 130) }));
+  let player, obs, speed, dist, score, nextGap, jumpHeld = false, touchDuck = 0;
+  let state = 'menu', best = Kit.getBest(ID), t = 0, flash = 0, lastMilestone = 0;
+
+  function reset() {
+    player = { x: 90, y: GY, vy: 0, onGround: true, duck: false };
+    obs = []; speed = 380; dist = 0; score = 0; nextGap = 500; lastMilestone = 0; parts.clear();
+  }
+
+  function jump() {
+    if (state !== 'play' || Kit.overlayOpen) return;
+    jumpHeld = true;
+    if (!player.onGround) return;
+    player.vy = -760; player.onGround = false;
+    Kit.beep(420, 0.08, 'square', 0.04, 300);
+  }
+
+  function spawn() {
+    if (score > 220 && Math.random() < 0.28) {
+      const lane = Kit.pick([GY - 22, GY - 52, GY - 52, GY - 96]);
+      obs.push({ type: 'bird', x: W + 40, y: lane, w: 42, h: 22, extra: Kit.rand(20, 60) });
+    } else {
+      const n = speed > 520 ? Kit.pick([1, 1, 2, 2, 3]) : Kit.pick([1, 1, 2]);
+      let x = W + 30;
+      for (let i = 0; i < n; i++) {
+        const tall = Math.random() < 0.4;
+        const w = tall ? 26 : 20, h = tall ? 60 : 42;
+        obs.push({ type: 'cactus', x, y: GY - h, w, h, tall });
+        x += w + 6;
+      }
+    }
+    nextGap = speed * Kit.rand(0.85, 1.6) + 120;
+  }
+
+  function playerBox() {
+    const p = player;
+    return p.duck ? { x: p.x + 2, y: p.y - 26, w: 52, h: 24 } : { x: p.x + 8, y: p.y - 46, w: 30, h: 44 };
+  }
+  function overlap(a, b) { return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y; }
+
+  function die() {
+    state = 'dead'; flash = 1;
+    Kit.noise(0.3, 0.1); Kit.beep(200, 0.3, 'sawtooth', 0.05, -120);
+    parts.burst(player.x + 24, player.y - 24, 20, ['#f97316', '#fde68a', '#fff'], 220, 0.7, 4, 300);
+    const rec = Kit.submitBest(ID, score);
+    best = Kit.getBest(ID);
+    setTimeout(() => Kit.overlay({
+      title: 'Ouch!',
+      html: `<div class="big">${score}</div><p>${rec ? '<span class="gold">New best score!</span>' : 'Best: ' + best}</p>`,
+      buttons: [{ label: 'Run again', onClick: () => { reset(); state = 'play'; } }]
+    }), 600);
+  }
+
+  function update(dt) {
+    t += dt;
+    parts.update(dt);
+    flash = Math.max(0, flash - dt * 3);
+    touchDuck = Math.max(0, touchDuck - dt);
+    const sp = state === 'play' ? speed : state === 'menu' ? 120 : 0;
+    for (const m of mesas) { m.x -= sp * 0.1 * dt; if (m.x + m.w < 0) m.x += 5 * 220; }
+    for (const d of dunes) { d.x -= sp * 0.3 * dt; if (d.x + d.r < 0) d.x += 6 * 170; }
+    if (state !== 'play') return;
+
+    speed = Math.min(900, speed + 9 * dt);
+    dist += speed * dt;
+    score = Math.floor(dist / 12);
+    if (score - lastMilestone >= 100) { lastMilestone = score - (score % 100); Kit.beep(990, 0.08, 'square', 0.04); setTimeout(() => Kit.beep(1320, 0.1, 'square', 0.04), 90); }
+
+    const duckHeld = Kit.down('ArrowDown', 'KeyS') || touchDuck > 0;
+    const p = player;
+    if (!Kit.down('Space', 'ArrowUp', 'KeyW') && !touchJump) jumpHeld = false;
+    if (!p.onGround) {
+      p.vy += (duckHeld ? 5200 : 2300) * dt;
+      if (!jumpHeld && p.vy < -260) p.vy = -260;
+      p.y += p.vy * dt;
+      if (p.y >= GY) { p.y = GY; p.vy = 0; p.onGround = true; parts.burst(p.x + 20, GY, 5, '#d6a756', 60, 0.3, 3); }
+    }
+    p.duck = duckHeld && p.onGround;
+
+    for (const o of obs) o.x -= (speed + (o.extra || 0)) * dt;
+    obs = obs.filter((o) => o.x + o.w > -20);
+    nextGap -= speed * dt;
+    if (nextGap <= 0) spawn();
+    const pb = playerBox();
+    for (const o of obs) {
+      const ob = o.type === 'bird' ? { x: o.x + 4, y: o.y - o.h / 2 + 4, w: o.w - 8, h: o.h - 8 } : { x: o.x + 3, y: o.y + 3, w: o.w - 6, h: o.h - 3 };
+      if (overlap(pb, ob)) return die();
+    }
+  }
+
+  /* ----- drawing ----- */
+  function drawCactus(o) {
+    ctx.fillStyle = '#15803d'; ctx.strokeStyle = '#14532d'; ctx.lineWidth = 2;
+    const cx = o.x + o.w / 2;
+    Kit.rr(ctx, o.x + o.w * 0.2, o.y, o.w * 0.6, o.h, o.w * 0.3); ctx.fill(); ctx.stroke();
+    const armY = o.y + o.h * (o.tall ? 0.35 : 0.4);
+    ctx.lineWidth = o.w * 0.28; ctx.lineCap = 'round'; ctx.strokeStyle = '#15803d';
+    ctx.beginPath(); ctx.moveTo(cx, armY + 10); ctx.lineTo(o.x - 2, armY + 10); ctx.lineTo(o.x - 2, armY - 4); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(cx, armY + 2); ctx.lineTo(o.x + o.w + 2, armY + 2); ctx.lineTo(o.x + o.w + 2, armY - 10); ctx.stroke();
+    ctx.lineCap = 'butt';
+    ctx.strokeStyle = 'rgba(255,255,255,.25)'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(cx, o.y + 6); ctx.lineTo(cx, o.y + o.h - 4); ctx.stroke();
+  }
+  function drawBird(o) {
+    const flap = Math.sin(t * 14 + o.x * 0.05);
+    ctx.save(); ctx.translate(o.x + o.w / 2, o.y);
+    ctx.fillStyle = '#6d28d9'; ctx.strokeStyle = '#2e1065'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(-6, 0); ctx.lineTo(4, -2 - flap * 18); ctx.lineTo(12, 0); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.ellipse(0, 2, 18, 7, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.arc(-17, -1, 7, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#fbbf24'; ctx.beginPath(); ctx.moveTo(-23, -2); ctx.lineTo(-32, 1); ctx.lineTo(-23, 3); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(-19, -3, 2, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
+  function drawFox() {
+    const p = player, run = p.onGround && state === 'play' ? Math.sin(t * 26) : 0.5;
+    ctx.save(); ctx.translate(p.x, p.y);
+    ctx.lineWidth = 2.5; ctx.strokeStyle = '#7c2d12'; ctx.lineCap = 'round';
+    const duck = p.duck;
+    const bodyY = duck ? -13 : -22, headX = duck ? 50 : 38, headY = duck ? -16 : -36;
+    // legs
+    ctx.strokeStyle = '#7c2d12'; ctx.lineWidth = 5;
+    for (const [lx, ph] of [[12, run], [28, -run]]) {
+      ctx.beginPath(); ctx.moveTo(lx, bodyY + 6); ctx.lineTo(lx + ph * 7, -2); ctx.stroke();
+    }
+    ctx.lineWidth = 2.5;
+    // tail
+    ctx.fillStyle = '#f97316';
+    ctx.beginPath(); ctx.moveTo(4, bodyY - 2);
+    ctx.quadraticCurveTo(-18, bodyY - 18 + run * 3, -22, bodyY - 4 + run * 3);
+    ctx.quadraticCurveTo(-10, bodyY + 4, 4, bodyY + 4); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#fff7ed'; ctx.beginPath(); ctx.arc(-19, bodyY - 6 + run * 3, 4.5, 0, Math.PI * 2); ctx.fill();
+    // body
+    ctx.fillStyle = '#f97316';
+    ctx.beginPath(); ctx.ellipse(duck ? 26 : 20, bodyY, duck ? 26 : 19, duck ? 10 : 13, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#fff7ed'; ctx.beginPath(); ctx.ellipse(duck ? 30 : 24, bodyY + 5, duck ? 14 : 10, 5, 0, 0, Math.PI * 2); ctx.fill();
+    // head
+    ctx.fillStyle = '#f97316';
+    for (const ex of [-6, 5]) { ctx.beginPath(); ctx.moveTo(headX + ex - 5, headY - 7); ctx.lineTo(headX + ex, headY - 20); ctx.lineTo(headX + ex + 5, headY - 7); ctx.closePath(); ctx.fill(); ctx.stroke(); }
+    ctx.beginPath(); ctx.arc(headX, headY, 12, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(headX + 6, headY - 4); ctx.lineTo(headX + 21, headY + 2); ctx.lineTo(headX + 6, headY + 8); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#fff7ed'; ctx.beginPath(); ctx.arc(headX + 4, headY + 5, 5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#1c1917'; ctx.beginPath(); ctx.arc(headX + 21, headY + 2, 2.6, 0, Math.PI * 2); ctx.fill();
+    if (state === 'dead') {
+      ctx.strokeStyle = '#1c1917'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(headX + 2, headY - 5); ctx.lineTo(headX + 8, headY + 1); ctx.moveTo(headX + 8, headY - 5); ctx.lineTo(headX + 2, headY + 1); ctx.stroke();
+    } else { ctx.beginPath(); ctx.arc(headX + 5, headY - 2, 2.6, 0, Math.PI * 2); ctx.fill(); }
+    ctx.restore();
+  }
+
+  function draw() {
+    const sky = ctx.createLinearGradient(0, 0, 0, GY);
+    sky.addColorStop(0, '#7dd3fc'); sky.addColorStop(1, '#fde68a');
+    ctx.fillStyle = sky; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = 'rgba(255,247,200,.9)'; ctx.beginPath(); ctx.arc(640, 80, 38, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#e8a75c';
+    for (const m of mesas) { ctx.beginPath(); ctx.moveTo(m.x, GY - 30); ctx.lineTo(m.x + 18, GY - 30 - m.h); ctx.lineTo(m.x + m.w - 18, GY - 30 - m.h); ctx.lineTo(m.x + m.w, GY - 30); ctx.fill(); }
+    ctx.fillStyle = '#f5c46b';
+    for (const d of dunes) { ctx.beginPath(); ctx.ellipse(d.x, GY, d.r, 46, 0, Math.PI, 0); ctx.fill(); }
+    ctx.fillStyle = '#e9b44c'; ctx.fillRect(0, GY, W, H - GY);
+    ctx.fillStyle = '#c98a2e'; ctx.fillRect(0, GY, W, 3);
+    ctx.fillStyle = '#b97a28';
+    const off = (dist * 1) % 60;
+    for (let x = -off; x < W; x += 60) { ctx.fillRect(x, GY + 14, 6, 3); ctx.fillRect(x + 28, GY + 32, 10, 3); ctx.fillRect(x + 44, GY + 46, 4, 2); }
+    for (const o of obs) (o.type === 'bird' ? drawBird : drawCactus)(o);
+    drawFox();
+    parts.draw(ctx);
+    Kit.text(ctx, 'HI ' + String(Math.max(best, score)).padStart(5, '0'), W - 130, 26, { align: 'right', size: 18, color: '#7c2d12' });
+    Kit.text(ctx, String(score).padStart(5, '0'), W - 20, 26, { align: 'right', size: 18, color: '#1c1917' });
+    if (flash > 0) { ctx.fillStyle = 'rgba(255,255,255,' + flash * 0.6 + ')'; ctx.fillRect(0, 0, W, H); }
+  }
+
+  window.addEventListener('keydown', (e) => {
+    if ((e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW') && !e.repeat) jump();
+  });
+  let touchJump = false;
+  document.body.addEventListener('pointerdown', () => { touchJump = true; jump(); });
+  window.addEventListener('pointerup', () => { touchJump = false; });
+  Kit.touchPad([{ label: '⬇', code: 'ArrowDown', side: 'right' }]);
+
+  reset();
+  Kit.overlay({
+    title: 'Desert Dash',
+    html: '<p>Help the fox run as far as it can! Jump over cactuses and duck under the birds. It gets faster the longer you last.</p>',
+    buttons: [{ label: 'Run!', onClick: () => { reset(); state = 'play'; } }],
+    keys: '<kbd>Space</kbd> or <kbd>↑</kbd> jump (hold for higher) · <kbd>↓</kbd> duck<br>Touch: tap to jump, hold ⬇ to duck'
+  });
+  Kit.loop((dt) => { update(dt); draw(); }).start();
+})();
+</script>
+</body>
+</html>

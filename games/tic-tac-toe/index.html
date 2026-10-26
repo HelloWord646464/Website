@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Tic-Tac-Toe</title>
+<link rel="stylesheet" href="../shared/kit.css">
+<style>
+  body { flex-direction: column; gap: 16px; }
+  #status { font-size: 20px; font-weight: 700; min-height: 28px; }
+  #grid { display: grid; grid-template-columns: repeat(3, var(--cell)); gap: 10px; }
+  .c {
+    width: var(--cell); height: var(--cell); border: 0; border-radius: 18px; background: #1b2246; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; padding: 0; transition: background .15s, transform .1s;
+  }
+  .c:hover:not(:disabled) { background: #242d5c; }
+  .c:active:not(:disabled) { transform: scale(.96); }
+  .c:disabled { cursor: default; }
+  .c.win { background: #2d3a7a; box-shadow: 0 0 0 3px #facc15 inset; }
+  .c svg { width: 64%; height: 64%; }
+  .c svg * { fill: none; stroke-width: 14; stroke-linecap: round; stroke-dasharray: 300; stroke-dashoffset: 300; animation: draw .35s ease forwards; }
+  .c svg .x2 { animation-delay: .12s; }
+  @keyframes draw { to { stroke-dashoffset: 0; } }
+  .score { display: flex; gap: 10px; }
+  .x-col { color: #22d3ee; } .o-col { color: #f472b6; }
+</style>
+</head>
+<body>
+<div class="kit-bar" id="bar">
+  <select class="kit-select" id="mode" aria-label="Opponent">
+    <option value="easy">vs CPU · Easy</option>
+    <option value="medium">vs CPU · Medium</option>
+    <option value="hard" selected>vs CPU · Hard</option>
+    <option value="2p">2 Players</option>
+  </select>
+  <button class="kit-small" id="reset">Reset score</button>
+</div>
+<div class="score">
+  <div class="kit-stat"><span class="x-col">X</span><b id="sx">0</b></div>
+  <div class="kit-stat">Draws<b id="sd">0</b></div>
+  <div class="kit-stat"><span class="o-col">O</span><b id="so">0</b></div>
+</div>
+<div id="status"></div>
+<div id="grid"></div>
+<script src="../shared/kit.js"></script>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const LINES = [[0, 1, 2], [3, 4, 5], [6, 7, 8], [0, 3, 6], [1, 4, 7], [2, 5, 8], [0, 4, 8], [2, 4, 6]];
+  const X_SVG = '<svg viewBox="0 0 100 100"><path d="M18 18 L82 82" stroke="#22d3ee"/><path class="x2" d="M82 18 L18 82" stroke="#22d3ee"/></svg>';
+  const O_SVG = '<svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="32" stroke="#f472b6"/></svg>';
+  let board, turn, starter = 'X', over, mode = Kit.store.get('ttt:mode', 'hard'), score = { X: 0, O: 0, D: 0 };
+  const cells = [];
+
+  function winner(b) {
+    for (const l of LINES) if (b[l[0]] && b[l[0]] === b[l[1]] && b[l[0]] === b[l[2]]) return { p: b[l[0]], line: l };
+    return b.every(Boolean) ? { p: 'D' } : null;
+  }
+  function minimax(b, player, depth) {
+    const w = winner(b);
+    if (w) return { s: w.p === 'O' ? 10 - depth : w.p === 'X' ? depth - 10 : 0 };
+    let best = { s: player === 'O' ? -Infinity : Infinity, i: -1 };
+    for (let i = 0; i < 9; i++) {
+      if (b[i]) continue;
+      b[i] = player;
+      const r = minimax(b, player === 'O' ? 'X' : 'O', depth + 1);
+      b[i] = null;
+      if (player === 'O' ? r.s > best.s : r.s < best.s) best = { s: r.s, i };
+    }
+    return best;
+  }
+  function cpuMove() {
+    const free = board.map((v, i) => (v ? -1 : i)).filter((i) => i >= 0);
+    const smart = mode === 'hard' || (mode === 'medium' && Math.random() < 0.7);
+    if (smart) {
+      // Pick randomly among equally good moves so games don't repeat.
+      let bestS = -Infinity, options = [];
+      for (const i of free) {
+        board[i] = 'O';
+        const s = minimax(board, 'X', 1).s;
+        board[i] = null;
+        if (s > bestS) { bestS = s; options = [i]; } else if (s === bestS) options.push(i);
+      }
+      return Kit.pick(options);
+    }
+    for (const p of ['O', 'X']) for (const i of free) { board[i] = p; const w = winner(board); board[i] = null; if (w && w.p === p) return i; }
+    return Kit.pick(free);
+  }
+
+  function newRound() {
+    board = Array(9).fill(null); over = false; turn = starter;
+    cells.forEach((c) => { c.innerHTML = ''; c.disabled = false; c.classList.remove('win'); });
+    status();
+    if (mode !== '2p' && turn === 'O') setTimeout(cpuPlay, 450);
+  }
+  function status() {
+    let s;
+    if (mode === '2p') s = `<span class="${turn === 'X' ? 'x-col' : 'o-col'}">${turn}</span>'s turn`;
+    else s = turn === 'X' ? 'Your turn (<span class="x-col">X</span>)' : 'Computer is thinking…';
+    $('status').innerHTML = s;
+    $('sx').textContent = score.X; $('so').textContent = score.O; $('sd').textContent = score.D;
+  }
+  function place(i, p) {
+    board[i] = p;
+    cells[i].innerHTML = p === 'X' ? X_SVG : O_SVG;
+    cells[i].disabled = true;
+    Kit.beep(p === 'X' ? 520 : 390, 0.07, 'triangle', 0.05);
+    const w = winner(board);
+    if (w) return end(w);
+    turn = p === 'X' ? 'O' : 'X';
+    status();
+    if (mode !== '2p' && turn === 'O') setTimeout(cpuPlay, 420);
+  }
+  function cpuPlay() { if (!over && turn === 'O') place(cpuMove(), 'O'); }
+  function end(w) {
+    over = true;
+    cells.forEach((c) => (c.disabled = true));
+    score[w.p]++;
+    starter = starter === 'X' ? 'O' : 'X';
+    let msg;
+    if (w.p === 'D') { msg = "It's a draw!"; Kit.beep(300, 0.2, 'sine', 0.04); }
+    else {
+      w.line.forEach((i) => cells[i].classList.add('win'));
+      if (mode === '2p') msg = `<span class="${w.p === 'X' ? 'x-col' : 'o-col'}">${w.p}</span> wins!`;
+      else msg = w.p === 'X' ? 'You win! 🎉' : 'Computer wins!';
+      if (w.p === 'X' || mode === '2p') [523, 659, 784].forEach((f, k) => setTimeout(() => Kit.beep(f, 0.12, 'triangle', 0.05), k * 100));
+      else Kit.beep(200, 0.3, 'sawtooth', 0.04, -80);
+    }
+    $('status').innerHTML = msg + ' <span style="color:#9aa3d6;font-size:15px">(tap to play again)</span>';
+    $('sx').textContent = score.X; $('so').textContent = score.O; $('sd').textContent = score.D;
+  }
+
+  function fit() {
+    const ah = window.innerHeight - 240, aw = window.innerWidth - 40;
+    const cell = Math.floor(Math.min((aw - 20) / 3, (ah - 20) / 3, 150));
+    document.documentElement.style.setProperty('--cell', Math.max(70, cell) + 'px');
+  }
+
+  for (let i = 0; i < 9; i++) {
+    const c = document.createElement('button');
+    c.className = 'c';
+    c.setAttribute('aria-label', 'Square ' + (i + 1));
+    c.addEventListener('click', () => {
+      if (over || board[i]) return;
+      if (mode !== '2p' && turn !== 'X') return;
+      place(i, turn);
+    });
+    cells.push(c);
+    $('grid').appendChild(c);
+  }
+  document.body.addEventListener('click', (e) => {
+    if (over && !e.target.closest('#bar')) { e.stopPropagation(); newRound(); }
+  }, true);
+  window.addEventListener('keydown', (e) => {
+    const n = /^(Digit|Numpad)([1-9])$/.exec(e.code);
+    if (n) { const i = +n[2] - 1; if (over) return newRound(); cells[i].click(); }
+    if (over && (e.code === 'Space' || e.code === 'Enter')) newRound();
+  });
+  $('mode').value = mode;
+  $('mode').addEventListener('change', (e) => { mode = e.target.value; Kit.store.set('ttt:mode', mode); score = { X: 0, O: 0, D: 0 }; starter = 'X'; newRound(); });
+  $('reset').addEventListener('click', () => { score = { X: 0, O: 0, D: 0 }; starter = 'X'; newRound(); });
+  window.addEventListener('resize', fit);
+  fit();
+  newRound();
+})();
+</script>
+</body>
+</html>

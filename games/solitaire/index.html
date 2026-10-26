@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Solitaire</title>
+<link rel="stylesheet" href="../shared/kit.css">
+<style>
+  body { display: block; background: radial-gradient(ellipse at 50% 30%, #1f7a45, #0f4a2a 75%); }
+  #bar {
+    position: fixed; top: 0; left: 0; right: 0; height: 52px; display: flex; align-items: center; justify-content: center; gap: 8px;
+    background: rgba(5, 25, 15, .45); padding: 0 8px; z-index: 5; flex-wrap: nowrap; overflow-x: auto;
+  }
+  #bar .kit-small { padding: 7px 12px; font-size: 13px; white-space: nowrap; }
+  #bar .info { color: #d1fae5; font-size: 13px; font-weight: 600; white-space: nowrap; padding: 0 6px; }
+  #bar .info b { color: #fff; font-size: 15px; }
+  #table { position: absolute; top: 56px; left: 50%; transform: translateX(-50%); width: var(--tw); height: calc(100% - 56px); }
+  .slot {
+    position: absolute; width: var(--cw); height: var(--ch); border-radius: calc(var(--cw) * .09);
+    border: 2px solid rgba(255, 255, 255, .22); background: rgba(0, 0, 0, .12);
+    display: flex; align-items: center; justify-content: center; color: rgba(255, 255, 255, .3); font-size: calc(var(--cw) * .42); font-weight: 700;
+  }
+  .slot.stock { cursor: pointer; }
+  .card {
+    position: absolute; width: var(--cw); height: var(--ch); border-radius: calc(var(--cw) * .09); background: #fff;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, .45); transition: left .2s ease, top .2s ease; cursor: pointer; touch-action: none; color: #111827;
+  }
+  .card.red { color: #dc2626; }
+  .card.drag { transition: none; box-shadow: 0 12px 26px rgba(0, 0, 0, .5); }
+  .card.down {
+    background: repeating-linear-gradient(45deg, #5b3df5 0 6px, #4c2fe0 6px 12px);
+    border: calc(var(--cw) * .05) solid #fff;
+  }
+  .card .tl, .card .br { position: absolute; font-weight: 800; font-size: calc(var(--cw) * .25); line-height: .95; text-align: center; letter-spacing: -1px; }
+  .card .tl { left: 6%; top: 4%; }
+  .card .br { right: 6%; bottom: 4%; transform: rotate(180deg); }
+  .card .tl small, .card .br small { display: block; font-size: calc(var(--cw) * .21); letter-spacing: 0; }
+  .card .mid { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: calc(var(--cw) * .48); padding-top: 10%; }
+  .card .mid.face { font-size: calc(var(--cw) * .42); font-weight: 900; font-family: Georgia, serif; }
+  .card.down > *, .card.down .mid { display: none; }
+  .card.hint { box-shadow: 0 0 0 3px #facc15, 0 1px 3px rgba(0, 0, 0, .45); }
+  .card.nope { animation: nope .3s; }
+  @keyframes nope { 25% { margin-left: -5px; } 75% { margin-left: 5px; } }
+</style>
+</head>
+<body>
+<div id="bar">
+  <button class="kit-small" id="new">New</button>
+  <button class="kit-small" id="undo">↶ Undo</button>
+  <button class="kit-small" id="draw">Draw 1</button>
+  <span class="info">Moves <b id="moves">0</b></span>
+  <span class="info">Time <b id="time">0:00</b></span>
+</div>
+<div id="table"></div>
+<script src="../shared/kit.js"></script>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const SUITS = ['♠', '♥', '♦', '♣'], RANKS = ['', 'A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
+  const isRed = (c) => c.s === 1 || c.s === 2;
+  const table = $('table');
+  const cards = [];
+  let stock = [], waste = [], found = [[], [], [], []], tab = [[], [], [], [], [], [], []];
+  let drawN = Kit.store.get('sol:draw', 1), history = [], moves = 0, time = 0, started = false, won = false, auto = false, drag = null;
+  let M = { cw: 80, ch: 112, gap: 10 };
+  const slots = {};
+
+  /* ----- setup ----- */
+  function makeSlot(key, label, cls) {
+    const d = document.createElement('div');
+    d.className = 'slot ' + (cls || '');
+    d.textContent = label || '';
+    table.appendChild(d);
+    slots[key] = d;
+    return d;
+  }
+  makeSlot('stock', '', 'stock').addEventListener('pointerdown', () => drawStock());
+  makeSlot('waste');
+  for (let i = 0; i < 4; i++) makeSlot('f' + i, 'A');
+  for (let i = 0; i < 7; i++) makeSlot('t' + i, 'K');
+  for (let s = 0; s < 4; s++) for (let r = 1; r <= 13; r++) {
+    const c = { id: cards.length, s, r, up: false, x: 0, y: 0 };
+    const el = document.createElement('div');
+    el.className = 'card' + (isRed(c) ? ' red' : '');
+    const mid = r > 10 ? `<div class="mid face">${RANKS[r]}${SUITS[s]}</div>` : `<div class="mid">${SUITS[s]}</div>`;
+    el.innerHTML = `<div class="tl">${RANKS[r]}<small>${SUITS[s]}</small></div>${mid}<div class="br">${RANKS[r]}<small>${SUITS[s]}</small></div>`;
+    el.addEventListener('pointerdown', (e) => onDown(e, c));
+    el.addEventListener('pointermove', onMove);
+    el.addEventListener('pointerup', onUp);
+    el.addEventListener('pointercancel', () => { drag = null; layout(); });
+    c.el = el;
+    table.appendChild(el);
+    cards.push(c);
+  }
+
+  function deal() {
+    const deck = Kit.shuffle(cards.slice());
+    stock = []; waste = []; found = [[], [], [], []]; tab = [[], [], [], [], [], [], []];
+    for (let i = 0; i < 7; i++) for (let j = i; j < 7; j++) { const c = deck.pop(); c.up = i === j; tab[j].push(c); }
+    deck.forEach((c) => { c.up = false; stock.push(c); });
+    history = []; moves = 0; time = 0; started = false; won = false; auto = false;
+    $('draw').textContent = 'Draw ' + drawN;
+    stats(); layout();
+  }
+
+  /* ----- rules ----- */
+  const top = (p) => p[p.length - 1];
+  const canFound = (c, f) => (f.length ? top(f).s === c.s && c.r === top(f).r + 1 : c.r === 1);
+  const canTab = (c, p) => (p.length ? top(p).up && isRed(top(p)) !== isRed(c) && c.r === top(p).r - 1 : c.r === 13);
+  function locate(c) {
+    let i = stock.indexOf(c); if (i >= 0) return { type: 'stock', pile: stock, pos: i };
+    i = waste.indexOf(c); if (i >= 0) return { type: 'waste', pile: waste, pos: i };
+    for (let k = 0; k < 4; k++) { i = found[k].indexOf(c); if (i >= 0) return { type: 'found', pile: found[k], pos: i, k }; }
+    for (let k = 0; k < 7; k++) { i = tab[k].indexOf(c); if (i >= 0) return { type: 'tab', pile: tab[k], pos: i, k }; }
+    return null;
+  }
+
+  function snapshot() {
+    history.push({ stock: stock.map((c) => c.id), waste: waste.map((c) => c.id), found: found.map((p) => p.map((c) => c.id)), tab: tab.map((p) => p.map((c) => c.id)), up: cards.map((c) => c.up), moves });
+    if (history.length > 300) history.shift();
+    started = true;
+  }
+  function undo() {
+    const h = history.pop();
+    if (!h || won || auto) return;
+    const C = (id) => cards[id];
+    stock = h.stock.map(C); waste = h.waste.map(C); found = h.found.map((p) => p.map(C)); tab = h.tab.map((p) => p.map(C));
+    cards.forEach((c, i) => (c.up = h.up[i]));
+    moves = h.moves;
+    Kit.beep(300, 0.04, 'sine', 0.03);
+    stats(); layout();
+  }
+
+  function drawStock() {
+    if (won || auto || Kit.overlayOpen) return;
+    if (!stock.length) {
+      if (!waste.length) return;
+      snapshot();
+      stock = waste.slice().reverse(); stock.forEach((c) => (c.up = false)); waste = [];
+      Kit.beep(200, 0.08, 'triangle', 0.04);
+    } else {
+      snapshot();
+      for (let k = 0; k < drawN && stock.length; k++) { const c = stock.pop(); c.up = true; waste.push(c); }
+      Kit.beep(520, 0.03, 'sine', 0.03);
+    }
+    moves++; stats(); layout();
+  }
+
+  function move(group, from, to) {
+    snapshot();
+    from.pile.splice(from.pos);
+    to.push(...group);
+    if (from.type === 'tab' && from.pile.length && !top(from.pile).up) top(from.pile).up = true;
+    moves++;
+    Kit.beep(found.includes(to) ? 700 : 440, 0.05, 'triangle', 0.04);
+    stats(); layout();
+    checkEnd();
+  }
+
+  function autoMove(group, loc) {
+    const c = group[0];
+    if (group.length === 1 && loc.type !== 'found') for (const f of found) if (canFound(c, f)) return move(group, loc, f);
+    for (let k = 0; k < 7; k++) { const p = tab[k]; if (p !== loc.pile && p.length && canTab(c, p)) return move(group, loc, p); }
+    if (c.r === 13 && !(loc.type === 'tab' && loc.pos === 0)) for (let k = 0; k < 7; k++) if (!tab[k].length) return move(group, loc, tab[k]);
+    c.el.classList.remove('nope'); void c.el.offsetWidth; c.el.classList.add('nope');
+  }
+
+  function checkEnd() {
+    if (found.every((f) => f.length === 13)) return win();
+    if (!auto && !stock.length && !waste.length && tab.every((p) => p.every((c) => c.up))) {
+      auto = true;
+      const step = () => {
+        for (let k = 0; k < 7; k++) {
+          const c = top(tab[k]);
+          if (!c) continue;
+          for (const f of found) if (canFound(c, f)) {
+            tab[k].pop(); f.push(c); moves++;
+            Kit.beep(500 + f.length * 30, 0.04, 'triangle', 0.035);
+            stats(); layout();
+            if (found.every((x) => x.length === 13)) { setTimeout(win, 300); return; }
+            setTimeout(step, 90);
+            return;
+          }
+        }
+        auto = false;
+      };
+      setTimeout(step, 250);
+    }
+  }
+
+  function win() {
+    if (won) return;
+    won = true;
+    [523, 659, 784, 1046, 1318].forEach((f, k) => setTimeout(() => Kit.beep(f, 0.15, 'triangle', 0.05), k * 120));
+    const key = 'solitaire:d' + drawN;
+    const rec = Kit.submitBest(key, time, true);
+    const best = Kit.getBest(key, time);
+    cards.forEach((c, i) => setTimeout(() => {
+      c.el.style.transition = 'left 1s ease-in, top 1s ease-in, transform 1s';
+      c.el.style.left = Kit.rand(-100, M.tw) + 'px'; c.el.style.top = window.innerHeight + 'px';
+      c.el.style.transform = 'rotate(' + Kit.rand(-200, 200) + 'deg)';
+    }, i * 25));
+    setTimeout(() => Kit.overlay({
+      title: 'You won! 🎉',
+      html: `<div class="big">${Kit.fmtTime(time)}</div><p>${moves} moves · draw ${drawN}</p><p>${rec ? '<span class="gold">New best time!</span>' : 'Best time: ' + Kit.fmtTime(best)}</p>`,
+      buttons: [{ label: 'Deal again', onClick: () => { resetStyles(); deal(); } }]
+    }), 52 * 25 + 600);
+  }
+  function resetStyles() { cards.forEach((c) => { c.el.style.transition = ''; c.el.style.transform = ''; }); }
+
+  /* ----- layout ----- */
+  function metrics() {
+    const W = window.innerWidth, H = window.innerHeight - 56;
+    const gap = Math.max(4, Math.min(14, Math.round(W * 0.012)));
+    const cw = Math.floor(Math.max(36, Math.min((Math.min(W, 1000) - gap * 8) / 7, (H - gap * 3) / (1.4 * 2 + 0.3 * 6))));
+    M = { cw, ch: Math.round(cw * 1.4), gap, tw: cw * 7 + gap * 8, H };
+    const root = document.documentElement.style;
+    root.setProperty('--cw', cw + 'px'); root.setProperty('--ch', M.ch + 'px'); root.setProperty('--tw', M.tw + 'px');
+  }
+  const X = (col) => M.gap + col * (M.cw + M.gap);
+  function place(c, x, y, z) {
+    c.x = x; c.y = y;
+    c.el.style.left = x + 'px'; c.el.style.top = y + 'px'; c.el.style.zIndex = z;
+    c.el.classList.toggle('down', !c.up);
+  }
+  function layout() {
+    const ty = M.gap, tabY = M.gap * 2 + M.ch;
+    const pos = (el, x, y) => { el.style.left = x + 'px'; el.style.top = y + 'px'; };
+    pos(slots.stock, X(0), ty); slots.stock.textContent = !stock.length && waste.length ? '↻' : '';
+    pos(slots.waste, X(1), ty);
+    for (let k = 0; k < 4; k++) pos(slots['f' + k], X(3 + k), ty);
+    for (let k = 0; k < 7; k++) pos(slots['t' + k], X(k), tabY);
+    stock.forEach((c, i) => place(c, X(0), ty, 10 + i));
+    const fanFrom = Math.max(0, waste.length - (drawN === 3 ? 3 : 1));
+    waste.forEach((c, i) => place(c, X(1) + (i > fanFrom ? (i - fanFrom) * M.cw * 0.26 : 0), ty, 100 + i));
+    found.forEach((f, k) => f.forEach((c, i) => place(c, X(3 + k), ty, 200 + i)));
+    const avail = M.H - tabY - M.ch - M.gap;
+    tab.forEach((p, k) => {
+      const downs = p.filter((c) => !c.up).length, ups = p.length - downs;
+      let fd = M.cw * 0.14, fu = M.cw * 0.3;
+      if (downs * fd + Math.max(0, ups - 1) * fu > avail) {
+        fu = Math.max(M.cw * 0.16, (avail - downs * fd) / Math.max(1, ups - 1));
+        if (downs * fd + (ups - 1) * fu > avail) fd = Math.max(M.cw * 0.06, (avail - (ups - 1) * fu) / Math.max(1, downs));
+      }
+      let y = tabY;
+      p.forEach((c, i) => { place(c, X(k), y, 300 + i); y += c.up ? fu : fd; });
+    });
+  }
+  function stats() { $('moves').textContent = moves; $('time').textContent = Kit.fmtTime(time); }
+
+  /* ----- pointer handling ----- */
+  function onDown(e, c) {
+    if (won || auto || Kit.overlayOpen || drag) return;
+    e.preventDefault();
+    const loc = locate(c);
+    if (!loc) return;
+    if (loc.type === 'stock') return drawStock();
+    if (!c.up) {
+      if (loc.type === 'tab' && loc.pos === loc.pile.length - 1) { snapshot(); c.up = true; moves++; stats(); layout(); }
+      return;
+    }
+    if ((loc.type === 'waste' || loc.type === 'found') && loc.pos !== loc.pile.length - 1) return;
+    const group = loc.pile.slice(loc.pos);
+    drag = { group, loc, sx: e.clientX, sy: e.clientY, moved: false, id: e.pointerId, orig: group.map((g) => ({ x: g.x, y: g.y })) };
+    try { c.el.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+  }
+  function onMove(e) {
+    if (!drag || e.pointerId !== drag.id) return;
+    const dx = e.clientX - drag.sx, dy = e.clientY - drag.sy;
+    if (!drag.moved && Math.hypot(dx, dy) < 6) return;
+    drag.moved = true;
+    drag.group.forEach((g, i) => {
+      g.el.classList.add('drag');
+      g.el.style.left = drag.orig[i].x + dx + 'px'; g.el.style.top = drag.orig[i].y + dy + 'px'; g.el.style.zIndex = 1000 + i;
+    });
+  }
+  function onUp(e) {
+    if (!drag || e.pointerId !== drag.id) return;
+    const d = drag; drag = null;
+    d.group.forEach((g) => g.el.classList.remove('drag'));
+    if (!d.moved) return autoMove(d.group, d.loc);
+    const dx = e.clientX - d.sx, dy = e.clientY - d.sy;
+    const cx = d.orig[0].x + dx + M.cw / 2, cy = d.orig[0].y + dy + M.ch / 2;
+    const col = Math.floor((cx - M.gap / 2) / (M.cw + M.gap));
+    const c = d.group[0];
+    if (col >= 0 && col < 7) {
+      if (cy < M.gap * 2 + M.ch + M.ch * 0.25 && col >= 3) {
+        const f = found[col - 3];
+        if (d.group.length === 1 && f !== d.loc.pile && canFound(c, f)) return move(d.group, d.loc, f);
+      }
+      if (cy >= M.gap * 2 + M.ch * 0.6) {
+        const p = tab[col];
+        if (p !== d.loc.pile && canTab(c, p)) return move(d.group, d.loc, p);
+      }
+    }
+    layout();
+  }
+
+  /* ----- controls ----- */
+  $('new').addEventListener('click', () => { resetStyles(); deal(); });
+  $('undo').addEventListener('click', undo);
+  $('draw').addEventListener('click', () => { drawN = drawN === 1 ? 3 : 1; Kit.store.set('sol:draw', drawN); resetStyles(); deal(); });
+  window.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.code === 'KeyZ') undo();
+    if (e.code === 'KeyU') undo();
+    if (e.code === 'KeyD' || e.code === 'Space') drawStock();
+  });
+  window.addEventListener('resize', () => { metrics(); layout(); });
+  setInterval(() => { if (started && !won && document.visibilityState === 'visible') { time++; stats(); } }, 1000);
+
+  metrics();
+  deal();
+})();
+</script>
+</body>
+</html>

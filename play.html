@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Play – PlayVault</title>
+<meta name="description" content="Play free games in your browser. No downloads, no sign-ups.">
+<meta name="theme-color" content="#0b1020">
+<link rel="icon" href="assets/img/logo.svg" type="image/svg+xml">
+<link rel="stylesheet" href="assets/css/site.css">
+</head>
+<body>
+<header class="header">
+  <a class="logo" href="./"><img src="assets/img/logo.svg" alt=""><span>Play<b>Vault</b></span></a>
+  <form class="search" action="./" method="get" role="search">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+    <input id="q" name="q" type="search" placeholder="Search games…" autocomplete="off" aria-label="Search games">
+  </form>
+  <a class="btn random-label" id="random" href="#" title="Play a random game">🎲 <span>Random</span></a>
+</header>
+
+<main class="wrap">
+  <div class="player" id="player">
+    <div class="stage">
+      <div class="bar">
+        <a class="btn icon" href="./" title="All games" aria-label="Back to all games">←</a>
+        <h1 id="title">Loading…</h1>
+        <button class="btn icon" id="favBtn" type="button" title="Favourite" aria-label="Add to favourites">♡</button>
+        <button class="btn icon" id="soundBtn" type="button" title="Sound on/off" aria-label="Toggle sound">🔊</button>
+        <button class="btn" id="restartBtn" type="button" title="Restart game">↻ <span class="hide-sm">Restart</span></button>
+        <button class="btn" id="fsBtn" type="button" title="Fullscreen">⛶ <span class="hide-sm">Fullscreen</span></button>
+      </div>
+      <div class="frame" id="frame">
+        <iframe id="game" title="Game" allow="fullscreen; autoplay; gamepad" allowfullscreen></iframe>
+        <button class="exit-fs" id="exitFs" type="button">✕ Exit fullscreen</button>
+      </div>
+      <div class="about">
+        <h2 id="aboutTitle">About this game</h2>
+        <p id="desc"></p>
+        <p class="how"><b>How to play:</b> <span id="how"></span></p>
+      </div>
+    </div>
+    <aside class="side">
+      <h2>More games</h2>
+      <div class="side-list" id="more"></div>
+    </aside>
+  </div>
+  <div class="notfound" id="notfound" hidden>
+    <h1>Game not found 😕</h1>
+    <p>That game doesn't exist (or it moved). Try one of these instead!</p>
+    <a class="btn primary" href="./">See all games</a>
+  </div>
+</main>
+
+<footer class="footer">
+  Tip: click inside the game first so it can hear your keyboard · Best scores are saved on this device
+</footer>
+
+<script src="assets/js/catalog.js"></script>
+<script src="assets/js/site.js"></script>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const id = new URLSearchParams(location.search).get('g');
+  const game = PV.byId(id);
+  const frame = $('frame'), iframe = $('game');
+
+  $('random').addEventListener('click', (e) => { e.preventDefault(); location.href = 'play.html?g=' + PV.randomGame(id).id; });
+
+  if (!game) {
+    $('player').hidden = true;
+    $('notfound').hidden = false;
+    document.title = 'Game not found – ' + SITE.name;
+    return;
+  }
+
+  document.title = game.title + ' – Play free on ' + SITE.name;
+  $('title').innerHTML = `<span aria-hidden="true">${game.emoji}</span> ${PV.esc(game.title)}`;
+  $('aboutTitle').textContent = 'About ' + game.title;
+  $('desc').textContent = game.desc;
+  $('how').textContent = game.how;
+  iframe.title = game.title;
+  iframe.src = 'games/' + game.id + '/index.html';
+  PV.addRecent(game.id);
+
+  // "More games": same category first, then the rest.
+  const others = GAMES.filter((g) => g.id !== game.id);
+  const same = others.filter((g) => g.tags.some((t) => game.tags.includes(t)));
+  const rest = others.filter((g) => !same.includes(g));
+  $('more').innerHTML = [...same, ...rest].slice(0, 12).map((g) => `
+    <a class="mini" href="play.html?g=${g.id}">
+      <div class="t" style="--c:${g.color}">${PV.thumbHTML(g)}</div>
+      <div><b>${PV.esc(g.title)}</b><span>${PV.esc(PV.tagLabel(g.tags[0]))}</span></div>
+    </a>`).join('');
+
+  /* ----- size the game window to fit the screen ----- */
+  function size() {
+    if (document.fullscreenElement || document.body.classList.contains('fake-fs')) { frame.style.height = ''; return; }
+    const w = frame.clientWidth;
+    const header = document.querySelector('.header').offsetHeight;
+    const bar = document.querySelector('.bar').offsetHeight;
+    const avail = window.innerHeight - header - bar - 34;
+    const h = Math.max(Math.min(avail, w / game.aspect), Math.min(avail, 320));
+    frame.style.height = Math.round(h) + 'px';
+  }
+  window.addEventListener('resize', size);
+  size();
+
+  /* ----- focus: send keyboard to the game ----- */
+  function focusGame() { try { iframe.contentWindow.focus(); } catch (e) { iframe.focus(); } }
+  iframe.addEventListener('load', () => {
+    focusGame();
+    try { iframe.contentWindow.Kit.muted = PV.get('muted', false); } catch (e) { /* not ready */ }
+  });
+  const GAME_KEYS = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space']);
+  window.addEventListener('keydown', (e) => {
+    if (GAME_KEYS.has(e.code) && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName)) { e.preventDefault(); focusGame(); }
+  });
+
+  /* ----- toolbar ----- */
+  function paintFav() {
+    const on = PV.isFav(game.id);
+    $('favBtn').textContent = on ? '♥' : '♡';
+    $('favBtn').classList.toggle('on', on);
+    $('favBtn').setAttribute('aria-label', on ? 'Remove from favourites' : 'Add to favourites');
+  }
+  $('favBtn').addEventListener('click', () => { PV.toggleFav(game.id); paintFav(); focusGame(); });
+  paintFav();
+
+  function paintSound() {
+    const muted = PV.get('muted', false);
+    $('soundBtn').textContent = muted ? '🔇' : '🔊';
+    $('soundBtn').title = muted ? 'Sound off' : 'Sound on';
+  }
+  $('soundBtn').addEventListener('click', () => {
+    const muted = !PV.get('muted', false);
+    PV.set('muted', muted);
+    try { iframe.contentWindow.Kit.muted = muted; } catch (e) { /* game not loaded */ }
+    paintSound();
+    focusGame();
+  });
+  paintSound();
+
+  $('restartBtn').addEventListener('click', () => {
+    try { iframe.contentWindow.location.reload(); } catch (e) { iframe.src = iframe.src; }
+  });
+
+  function enterFs() {
+    const req = frame.requestFullscreen || frame.webkitRequestFullscreen;
+    if (req) {
+      Promise.resolve(req.call(frame)).catch(() => document.body.classList.add('fake-fs'));
+    } else document.body.classList.add('fake-fs');
+    setTimeout(focusGame, 150);
+  }
+  function exitFs() {
+    if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen();
+    else if (document.webkitFullscreenElement && document.webkitExitFullscreen) document.webkitExitFullscreen();
+    document.body.classList.remove('fake-fs');
+    setTimeout(size, 100);
+  }
+  $('fsBtn').addEventListener('click', enterFs);
+  $('exitFs').addEventListener('click', exitFs);
+  document.addEventListener('fullscreenchange', () => { size(); focusGame(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && document.body.classList.contains('fake-fs')) exitFs(); });
+})();
+</script>
+</body>
+</html>

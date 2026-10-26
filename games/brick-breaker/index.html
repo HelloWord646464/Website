@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Brick Breaker</title>
+<link rel="stylesheet" href="../shared/kit.css">
+</head>
+<body>
+<script src="../shared/kit.js"></script>
+<script>
+(() => {
+  const ID = 'brick-breaker', W = 800, H = 600, LEFT = 40, TOP = 72, BW = 54.5, BH = 22, GAP = 6;
+  const view = Kit.canvas(W, H), ctx = view.ctx;
+  const ROWCOL = ['#f43f5e', '#f97316', '#facc15', '#4ade80', '#22d3ee', '#818cf8', '#c084fc', '#f472b6'];
+  const LEVELS = [
+    ['............', '111111111111', '111111111111', '111111111111', '111111111111', '111111111111'],
+    ['.....22.....', '....2112....', '...211112...', '..21111112..', '.2111111112.', '211111111112'],
+    ['333333333333', '............', '222222222222', '............', '111111111111', '111111111111', '111111111111'],
+    ['222222222222', '2#11111111#2', '2#1......1#2', '2#11111111#2', '222222222222', '111111111111'],
+    ['.....33.....', '....3223....', '...321123...', '..32111123..', '...321123...', '....3223....', '.....33.....'],
+    ['1#1#1#1#1#1#', '222222222222', '111111111111', '#3#......#3#', '111111111111', '222222222222']
+  ];
+  const CAPS = {
+    W: { color: '#22d3ee', label: 'W', name: 'Wide paddle' },
+    M: { color: '#a855f7', label: 'M', name: 'Multi-ball' },
+    S: { color: '#4ade80', label: 'S', name: 'Slow ball' },
+    L: { color: '#f43f5e', label: '♥', name: 'Extra life' }
+  };
+  const parts = new Kit.Particles();
+  const paddle = { x: W / 2, y: 562, w: 110, h: 14 };
+  let bricks = [], balls = [], caps = [], lives, score, level, effects, pointerX = null, banner = null;
+  let state = 'menu', best = Kit.getBest(ID), shake = 0, t0 = 0;
+
+  const baseSpeed = () => Math.min(400 + (level - 1) * 28, 620);
+
+  function newGame() { lives = 3; score = 0; level = 1; loadLevel(); state = 'play'; }
+  function loadLevel() {
+    const L = LEVELS[(level - 1) % LEVELS.length];
+    bricks = [];
+    L.forEach((row, r) => [...row].forEach((ch, c) => {
+      if (ch === '.') return;
+      const steel = ch === '#';
+      bricks.push({ x: LEFT + c * (BW + GAP), y: TOP + r * (BH + GAP), w: BW, h: BH, hp: steel ? 1 : +ch, max: steel ? 1 : +ch, steel, color: ROWCOL[r % ROWCOL.length], flash: 0 });
+    }));
+    caps = []; parts.clear();
+    banner = { text: 'Level ' + level, t: 1.6 };
+    resetBall();
+  }
+  function resetBall() {
+    effects = { wide: 0, slow: 0 };
+    balls = [{ x: paddle.x, y: paddle.y - 20, dx: 0, dy: -1, sp: baseSpeed(), r: 8, stuck: true, off: 0, trail: [] }];
+  }
+  function launch() {
+    if (state !== 'play') return;
+    for (const b of balls) if (b.stuck) {
+      const a = Kit.rand(-0.4, 0.4);
+      b.dx = Math.sin(a); b.dy = -Math.cos(a); b.stuck = false;
+      Kit.beep(500, 0.05, 'square', 0.04);
+    }
+  }
+  function fixAngle(b) {
+    if (Math.abs(b.dy) < 0.28) {
+      b.dy = 0.28 * (b.dy < 0 ? -1 : 1);
+      b.dx = Math.sqrt(1 - b.dy * b.dy) * (b.dx < 0 ? -1 : 1);
+    }
+  }
+
+  function hitBrick(br, ball) {
+    br.flash = 0.12;
+    if (br.steel) { Kit.beep(900, 0.04, 'triangle', 0.03); return; }
+    br.hp--;
+    score += 10;
+    ball.sp = Math.min(ball.sp + 4, baseSpeed() + 200);
+    if (br.hp <= 0) {
+      bricks.splice(bricks.indexOf(br), 1);
+      score += 20 * br.max;
+      parts.burst(br.x + br.w / 2, br.y + br.h / 2, 16, [br.color, '#ffffff'], 200, 0.6, 4, 400);
+      Kit.beep(380 + Math.random() * 200, 0.06, 'square', 0.04);
+      if (Math.random() < 0.13) {
+        const type = Kit.pick(lives < 3 ? ['W', 'M', 'S', 'L'] : ['W', 'M', 'S', 'W', 'M', 'S', 'L']);
+        caps.push({ x: br.x + br.w / 2, y: br.y + br.h / 2, type });
+      }
+    } else Kit.beep(300, 0.05, 'square', 0.04);
+  }
+
+  function applyCap(type) {
+    Kit.beep(700, 0.15, 'triangle', 0.05, 500);
+    banner = { text: CAPS[type].name + '!', t: 1.1 };
+    if (type === 'W') effects.wide = 15;
+    if (type === 'S') effects.slow = 10;
+    if (type === 'L') lives = Math.min(lives + 1, 6);
+    if (type === 'M') {
+      launch();
+      const extra = [];
+      for (const b of balls) for (const a of [-0.45, 0.45]) {
+        if (balls.length + extra.length >= 12) break;
+        const c = Math.cos(a), s = Math.sin(a);
+        const n = { ...b, dx: b.dx * c - b.dy * s, dy: b.dx * s + b.dy * c, trail: [] };
+        fixAngle(n);
+        extra.push(n);
+      }
+      balls.push(...extra);
+    }
+  }
+
+  function moveBall(b, dt) {
+    const dist = b.sp * (effects.slow > 0 ? 0.65 : 1) * dt;
+    const steps = Math.max(1, Math.ceil(dist / 4));
+    const d = dist / steps;
+    for (let s = 0; s < steps; s++) {
+      b.x += b.dx * d; b.y += b.dy * d;
+      if (b.x < b.r) { b.x = b.r; b.dx = Math.abs(b.dx); Kit.beep(260, 0.02, 'sine', 0.03); }
+      if (b.x > W - b.r) { b.x = W - b.r; b.dx = -Math.abs(b.dx); Kit.beep(260, 0.02, 'sine', 0.03); }
+      if (b.y < 50 + b.r) { b.y = 50 + b.r; b.dy = Math.abs(b.dy); Kit.beep(260, 0.02, 'sine', 0.03); }
+      const p = paddle;
+      if (b.dy > 0 && b.y + b.r >= p.y - p.h / 2 && b.y - b.r <= p.y + p.h / 2 && Math.abs(b.x - p.x) <= p.w / 2 + b.r) {
+        const rel = Kit.clamp((b.x - p.x) / (p.w / 2), -1, 1);
+        const a = rel * 1.05;
+        b.dx = Math.sin(a); b.dy = -Math.cos(a);
+        b.y = p.y - p.h / 2 - b.r;
+        Kit.beep(220, 0.04, 'square', 0.04);
+      }
+      for (const br of bricks) {
+        const cx = Kit.clamp(b.x, br.x, br.x + br.w), cy = Kit.clamp(b.y, br.y, br.y + br.h);
+        const ddx = b.x - cx, ddy = b.y - cy;
+        if (ddx * ddx + ddy * ddy > b.r * b.r) continue;
+        const mx = br.x + br.w / 2, my = br.y + br.h / 2;
+        const ox = br.w / 2 + b.r - Math.abs(b.x - mx), oy = br.h / 2 + b.r - Math.abs(b.y - my);
+        if (ox < oy) { const sg = b.x < mx ? -1 : 1; b.dx = sg * Math.abs(b.dx); b.x += sg * ox; }
+        else { const sg = b.y < my ? -1 : 1; b.dy = sg * Math.abs(b.dy); b.y += sg * oy; }
+        fixAngle(b);
+        hitBrick(br, b);
+        break;
+      }
+    }
+  }
+
+  function update(dt) {
+    t0 += dt;
+    parts.update(dt);
+    shake = Math.max(0, shake - dt);
+    if (banner) { banner.t -= dt; if (banner.t <= 0) banner = null; }
+    if (state !== 'play') return;
+    const targetW = effects.wide > 0 ? 170 : 110;
+    paddle.w += (targetW - paddle.w) * Math.min(1, dt * 10);
+    let dir = 0;
+    if (Kit.down('ArrowLeft', 'KeyA')) dir -= 1;
+    if (Kit.down('ArrowRight', 'KeyD')) dir += 1;
+    if (dir) { paddle.x += dir * 720 * dt; pointerX = null; }
+    else if (pointerX !== null) paddle.x += (pointerX - paddle.x) * Math.min(1, dt * 28);
+    paddle.x = Kit.clamp(paddle.x, paddle.w / 2, W - paddle.w / 2);
+    effects.wide = Math.max(0, effects.wide - dt);
+    effects.slow = Math.max(0, effects.slow - dt);
+
+    for (const b of balls) {
+      if (b.stuck) { b.x = paddle.x + b.off; b.y = paddle.y - paddle.h / 2 - b.r; continue; }
+      moveBall(b, dt);
+      b.trail.push({ x: b.x, y: b.y });
+      if (b.trail.length > 8) b.trail.shift();
+    }
+    balls = balls.filter((b) => b.y - b.r < H + 10);
+    if (!balls.length) {
+      lives--; shake = 0.3;
+      Kit.noise(0.3, 0.1); Kit.beep(200, 0.3, 'sawtooth', 0.04, -120);
+      if (lives <= 0) return gameOver();
+      resetBall();
+      banner = { text: lives === 1 ? 'Last life!' : lives + ' lives left', t: 1.2 };
+    }
+    for (const c of caps) {
+      c.y += 150 * dt;
+      if (c.y + 10 >= paddle.y - paddle.h / 2 && c.y - 10 <= paddle.y + paddle.h / 2 && Math.abs(c.x - paddle.x) <= paddle.w / 2 + 18) {
+        c.done = true; applyCap(c.type);
+      }
+    }
+    caps = caps.filter((c) => !c.done && c.y < H + 20);
+    for (const br of bricks) br.flash = Math.max(0, br.flash - dt);
+    if (!bricks.some((b) => !b.steel)) levelClear();
+  }
+
+  function levelClear() {
+    state = 'between';
+    score += 100 * lives;
+    Kit.beep(523, 0.12, 'triangle', 0.05); setTimeout(() => Kit.beep(659, 0.12, 'triangle', 0.05), 120); setTimeout(() => Kit.beep(784, 0.2, 'triangle', 0.05), 240);
+    Kit.overlay({
+      title: 'Level ' + level + ' cleared!',
+      html: `<div class="big">${score}</div><p>Bonus: ${100 * lives} for lives left</p>`,
+      buttons: [{ label: 'Next level', onClick: () => { level++; loadLevel(); state = 'play'; } }]
+    });
+  }
+  function gameOver() {
+    state = 'over';
+    const rec = Kit.submitBest(ID, score);
+    best = Kit.getBest(ID);
+    setTimeout(() => Kit.overlay({
+      title: 'Game Over',
+      html: `<div class="big">${score}</div><p>You reached level ${level}</p><p>${rec ? '<span class="gold">New best score!</span>' : 'Best: ' + best}</p>`,
+      buttons: [{ label: 'Play again', onClick: newGame }]
+    }), 400);
+  }
+  function pause() {
+    if (state !== 'play') return;
+    state = 'paused';
+    Kit.overlay({ title: 'Paused', buttons: [{ label: 'Resume', onClick: () => { state = 'play'; } }, { label: 'Restart', alt: true, onClick: newGame }] });
+  }
+
+  window.addEventListener('keydown', (e) => {
+    if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW') launch();
+    if (e.code === 'KeyP' || e.code === 'Escape') pause();
+  });
+  window.addEventListener('blur', pause);
+  document.body.addEventListener('pointermove', (e) => { if (state === 'play') pointerX = view.toLocal(e).x; });
+  document.body.addEventListener('pointerdown', (e) => {
+    if (Kit.overlayOpen || state !== 'play') return;
+    pointerX = view.toLocal(e).x;
+    launch();
+  });
+
+  function drawBrick(b) {
+    if (b.steel) {
+      const g = ctx.createLinearGradient(0, b.y, 0, b.y + b.h);
+      g.addColorStop(0, '#cbd5e1'); g.addColorStop(1, '#64748b');
+      ctx.fillStyle = g;
+    } else ctx.fillStyle = b.color;
+    Kit.rr(ctx, b.x, b.y, b.w, b.h, 5); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,.3)';
+    Kit.rr(ctx, b.x + 3, b.y + 3, b.w - 6, 5, 3); ctx.fill();
+    if (!b.steel && b.hp > 1) {
+      ctx.strokeStyle = 'rgba(0,0,0,.35)'; ctx.lineWidth = 2;
+      for (let i = 1; i < b.hp; i++) { Kit.rr(ctx, b.x + 2 + i * 3, b.y + 2 + i * 3, b.w - 4 - i * 6, b.h - 4 - i * 6, 3); ctx.stroke(); }
+    }
+    if (b.steel) {
+      ctx.fillStyle = '#475569';
+      for (const fx of [8, b.w - 8]) { ctx.beginPath(); ctx.arc(b.x + fx, b.y + b.h / 2, 2.5, 0, Math.PI * 2); ctx.fill(); }
+    }
+    if (b.flash > 0) { ctx.fillStyle = 'rgba(255,255,255,' + b.flash * 6 + ')'; Kit.rr(ctx, b.x, b.y, b.w, b.h, 5); ctx.fill(); }
+  }
+
+  function draw() {
+    ctx.save();
+    if (shake > 0) ctx.translate(Kit.rand(-8, 8) * shake, Kit.rand(-8, 8) * shake);
+    const bg = ctx.createLinearGradient(0, 0, 0, H);
+    bg.addColorStop(0, '#111a3a'); bg.addColorStop(1, '#0b1124');
+    ctx.fillStyle = bg; ctx.fillRect(-10, -10, W + 20, H + 20);
+    ctx.fillStyle = 'rgba(255,255,255,.03)';
+    for (let x = 0; x < W; x += 40) ctx.fillRect(x, 50, 1, H);
+    // HUD
+    ctx.fillStyle = '#0b1124'; ctx.fillRect(0, 0, W, 50);
+    Kit.text(ctx, 'SCORE ' + score, 20, 26, { align: 'left', size: 18 });
+    Kit.text(ctx, 'LEVEL ' + (level || 1), W / 2, 26, { size: 18, color: '#c4b5fd' });
+    for (let i = 0; i < (lives || 0); i++) Kit.text(ctx, '♥', W - 24 - i * 26, 27, { size: 22, color: '#f43f5e' });
+    if (state === 'menu') Kit.text(ctx, 'BEST ' + best, W - 20, 26, { align: 'right', size: 18 });
+
+    bricks.forEach(drawBrick);
+    for (const c of caps) {
+      const info = CAPS[c.type];
+      ctx.fillStyle = info.color; ctx.shadowColor = info.color; ctx.shadowBlur = 12;
+      Kit.rr(ctx, c.x - 18, c.y - 10, 36, 20, 10); ctx.fill(); ctx.shadowBlur = 0;
+      Kit.text(ctx, info.label, c.x, c.y + 1, { size: 14, weight: 800, color: '#0b1124' });
+    }
+    // paddle
+    const p = paddle;
+    const pg = ctx.createLinearGradient(0, p.y - p.h / 2, 0, p.y + p.h / 2);
+    pg.addColorStop(0, '#a78bfa'); pg.addColorStop(1, '#6d28d9');
+    ctx.fillStyle = pg; ctx.shadowColor = '#8b5cf6'; ctx.shadowBlur = effects && effects.wide > 0 ? 18 : 8;
+    Kit.rr(ctx, p.x - p.w / 2, p.y - p.h / 2, p.w, p.h, 7); ctx.fill(); ctx.shadowBlur = 0;
+    // balls
+    for (const b of balls) {
+      b.trail.forEach((t, i) => {
+        ctx.globalAlpha = (i / b.trail.length) * 0.35;
+        ctx.fillStyle = effects.slow > 0 ? '#4ade80' : '#93c5fd';
+        ctx.beginPath(); ctx.arc(t.x, t.y, b.r * (i / b.trail.length), 0, Math.PI * 2); ctx.fill();
+      });
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = '#fff'; ctx.shadowColor = '#93c5fd'; ctx.shadowBlur = 14;
+      ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2); ctx.fill(); ctx.shadowBlur = 0;
+    }
+    parts.draw(ctx);
+    if (state === 'play' && balls.some((b) => b.stuck)) {
+      ctx.globalAlpha = 0.6 + Math.sin(t0 * 5) * 0.3;
+      Kit.text(ctx, Kit.isTouch ? 'Tap to launch' : 'Click or press Space to launch', W / 2, 470, { size: 18, color: '#c7d2fe' });
+      ctx.globalAlpha = 1;
+    }
+    let ey = H - 14;
+    if (effects && effects.wide > 0) { Kit.text(ctx, 'WIDE ' + Math.ceil(effects.wide) + 's', 16, ey, { align: 'left', size: 13, color: '#22d3ee' }); ey -= 18; }
+    if (effects && effects.slow > 0) Kit.text(ctx, 'SLOW ' + Math.ceil(effects.slow) + 's', 16, ey, { align: 'left', size: 13, color: '#4ade80' });
+    if (banner) {
+      ctx.globalAlpha = Math.min(1, banner.t * 2);
+      Kit.text(ctx, banner.text, W / 2, 360, { size: 34, weight: 800, stroke: '#0b1124', strokeWidth: 6 });
+      ctx.globalAlpha = 1;
+    }
+    ctx.restore();
+  }
+
+  level = 1; lives = 3; score = 0;
+  loadLevel(); banner = null;
+  Kit.overlay({
+    title: 'Brick Breaker',
+    html: '<p>Bounce the ball off your paddle to smash every brick. Catch falling power-ups for a wider paddle, extra balls, slow motion and extra lives.</p>',
+    buttons: [{ label: 'Play', onClick: newGame }],
+    keys: 'Move with the <b>mouse</b>, finger or <kbd>←</kbd><kbd>→</kbd><br><kbd>Space</kbd> or click to launch · <kbd>P</kbd> pause'
+  });
+  Kit.loop((dt) => { update(dt); draw(); }).start();
+})();
+</script>
+</body>
+</html>

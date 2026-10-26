@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Block Drop</title>
+<link rel="stylesheet" href="../shared/kit.css">
+</head>
+<body>
+<script src="../shared/kit.js"></script>
+<script>
+(() => {
+  const ID = 'block-drop', COLS = 10, ROWS = 20, CS = 30, BX = 20, BY = 20, W = 520, H = 640, SX = 340;
+  const view = Kit.canvas(W, H), ctx = view.ctx;
+  const SHAPES = {
+    I: [[0, 0, 0, 0], [1, 1, 1, 1], [0, 0, 0, 0], [0, 0, 0, 0]],
+    J: [[1, 0, 0], [1, 1, 1], [0, 0, 0]],
+    L: [[0, 0, 1], [1, 1, 1], [0, 0, 0]],
+    O: [[1, 1], [1, 1]],
+    S: [[0, 1, 1], [1, 1, 0], [0, 0, 0]],
+    T: [[0, 1, 0], [1, 1, 1], [0, 0, 0]],
+    Z: [[1, 1, 0], [0, 1, 1], [0, 0, 0]]
+  };
+  const COLORS = { I: '#22d3ee', J: '#3b82f6', L: '#f97316', O: '#facc15', S: '#22c55e', T: '#a855f7', Z: '#ef4444' };
+  const KICKS = [[0, 0], [-1, 0], [1, 0], [0, -1], [-2, 0], [2, 0], [-1, -1], [1, -1]];
+  const HOLD_BOX = { x: SX, y: 272, w: 160, h: 84 };
+  const DAS = 0.16, ARR = 0.045, LOCK = 0.5;
+  const parts = new Kit.Particles();
+  let board, cur, hold, canHold, queue, score, lines, level, fallT, lockT, lockResets, clearing, clearT, das;
+  let state = 'menu', best = Kit.getBest(ID);
+
+  const emptyRow = () => Array(COLS).fill(null);
+
+  function reset() {
+    board = [...Array(ROWS)].map(emptyRow);
+    queue = []; refill();
+    hold = null; canHold = true; score = 0; lines = 0; level = 1;
+    clearing = null; das = { dir: 0, t: 0 };
+    parts.clear();
+    spawn(queue.shift()); refill();
+  }
+  function refill() { while (queue.length < 7) queue.push(...Kit.shuffle(Object.keys(SHAPES))); }
+  function nextType() { const t = queue.shift(); refill(); return t; }
+
+  function spawn(type) {
+    const m = SHAPES[type].map((r) => r.slice());
+    cur = { type, m, x: Math.floor((COLS - m.length) / 2), y: type === 'I' ? -1 : 0 };
+    fallT = 0; lockT = 0; lockResets = 0;
+    if (collides(cur.m, cur.x, cur.y)) gameOver();
+  }
+  function spawnNext() { spawn(nextType()); canHold = true; }
+
+  function collides(m, x, y) {
+    for (let i = 0; i < m.length; i++) for (let j = 0; j < m[i].length; j++) {
+      if (!m[i][j]) continue;
+      const bx = x + j, by = y + i;
+      if (bx < 0 || bx >= COLS || by >= ROWS) return true;
+      if (by >= 0 && board[by][bx]) return true;
+    }
+    return false;
+  }
+  function move(dx, dy) {
+    if (collides(cur.m, cur.x + dx, cur.y + dy)) return false;
+    cur.x += dx; cur.y += dy;
+    return true;
+  }
+  function touched() {
+    // Moving or rotating while resting on the stack delays locking (limited times).
+    if (collides(cur.m, cur.x, cur.y + 1) && lockResets < 15) { lockT = 0; lockResets++; }
+  }
+  function userMove(dx) {
+    if (!canAct()) return;
+    if (move(dx, 0)) { touched(); Kit.beep(240, 0.02, 'square', 0.025); }
+  }
+  function rotate(dir) {
+    if (!canAct() || cur.type === 'O') return;
+    const m = cur.m, n = m.length;
+    const r = m.map((row, i) => row.map((_, j) => (dir > 0 ? m[n - 1 - j][i] : m[j][n - 1 - i])));
+    for (const [kx, ky] of KICKS) {
+      if (!collides(r, cur.x + kx, cur.y + ky)) {
+        cur.m = r; cur.x += kx; cur.y += ky;
+        touched();
+        Kit.beep(420, 0.03, 'square', 0.03);
+        return;
+      }
+    }
+  }
+  function ghostY() { let y = cur.y; while (!collides(cur.m, cur.x, y + 1)) y++; return y; }
+  function hardDrop() {
+    if (!canAct()) return;
+    const g = ghostY();
+    score += (g - cur.y) * 2;
+    cur.y = g;
+    lock();
+  }
+  function doHold() {
+    if (!canAct() || !canHold) return;
+    const t = cur.type;
+    if (hold) { const h = hold; hold = t; spawn(h); } else { hold = t; spawn(nextType()); }
+    canHold = false;
+    Kit.beep(520, 0.05, 'triangle', 0.04);
+  }
+  const canAct = () => state === 'play' && !clearing && !Kit.overlayOpen;
+
+  function lock() {
+    let topOut = false;
+    cur.m.forEach((row, i) => row.forEach((v, j) => {
+      if (!v) return;
+      const by = cur.y + i, bx = cur.x + j;
+      if (by < 0) topOut = true; else board[by][bx] = cur.type;
+    }));
+    if (topOut) return gameOver();
+    Kit.beep(150, 0.05, 'triangle', 0.05);
+    const full = [];
+    board.forEach((row, i) => { if (row.every(Boolean)) full.push(i); });
+    if (full.length) {
+      clearing = full; clearT = 0.28;
+      Kit.beep(520 + full.length * 120, 0.18, 'square', 0.05, 400);
+      full.forEach((r) => {
+        for (let c = 0; c < COLS; c++) parts.burst(BX + c * CS + CS / 2, BY + r * CS + CS / 2, 3, [COLORS[board[r][c]], '#fff'], 160, 0.6, 4, 300);
+      });
+    } else spawnNext();
+  }
+  function finishClear() {
+    const n = clearing.length;
+    board = board.filter((_, i) => !clearing.includes(i));
+    while (board.length < ROWS) board.unshift(emptyRow());
+    lines += n;
+    score += [0, 100, 300, 500, 800][n] * level;
+    const newLevel = 1 + Math.floor(lines / 10);
+    if (newLevel > level) { level = newLevel; Kit.beep(660, 0.25, 'triangle', 0.05, 600); }
+    clearing = null;
+    spawnNext();
+  }
+  const gravity = () => Math.max(0.03, Math.pow(0.8 - (level - 1) * 0.007, level - 1));
+
+  function gameOver() {
+    state = 'over';
+    Kit.noise(0.4, 0.08);
+    const rec = Kit.submitBest(ID, score);
+    best = Kit.getBest(ID);
+    setTimeout(() => Kit.overlay({
+      title: 'Game Over',
+      html: `<div class="big">${score}</div><p>${lines} lines · level ${level}</p><p>${rec ? '<span class="gold">New best score!</span>' : 'Best: ' + best}</p>`,
+      buttons: [{ label: 'Play again', onClick: start }]
+    }), 500);
+  }
+  function start() { reset(); state = 'play'; }
+  function pause() {
+    if (state !== 'play') return;
+    state = 'paused';
+    Kit.overlay({ title: 'Paused', buttons: [{ label: 'Resume', onClick: () => { state = 'play'; } }, { label: 'Restart', alt: true, onClick: start }] });
+  }
+
+  /* ----- keyboard ----- */
+  window.addEventListener('keydown', (e) => {
+    if (e.code === 'KeyP' || e.code === 'Escape') return pause();
+    if (e.repeat) return;
+    switch (e.code) {
+      case 'ArrowLeft': case 'KeyA': userMove(-1); das = { dir: -1, t: 0 }; break;
+      case 'ArrowRight': case 'KeyD': userMove(1); das = { dir: 1, t: 0 }; break;
+      case 'ArrowUp': case 'KeyX': case 'KeyW': rotate(1); break;
+      case 'KeyZ': case 'ControlLeft': rotate(-1); break;
+      case 'Space': hardDrop(); break;
+      case 'KeyC': case 'ShiftLeft': case 'ShiftRight': doHold(); break;
+    }
+  });
+  window.addEventListener('blur', pause);
+
+  /* ----- touch: drag to move, tap to rotate, flick down to drop, flick up to hold ----- */
+  let tp = null;
+  document.body.addEventListener('pointerdown', (e) => {
+    if (!canAct()) return;
+    const p = view.toLocal(e), b = HOLD_BOX;
+    if (p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h) { doHold(); return; }
+    tp = { id: e.pointerId, x: p.x, y: p.y, ox: p.x, oy: p.y, t: performance.now(), moved: false };
+  });
+  document.body.addEventListener('pointermove', (e) => {
+    if (!tp || e.pointerId !== tp.id || !canAct()) return;
+    const p = view.toLocal(e), step = CS * 0.8;
+    while (p.x - tp.x > step) { userMove(1); tp.x += step; tp.moved = true; }
+    while (tp.x - p.x > step) { userMove(-1); tp.x -= step; tp.moved = true; }
+    while (p.y - tp.y > CS) { if (move(0, 1)) score += 1; tp.y += CS; tp.moved = true; }
+  });
+  document.body.addEventListener('pointerup', (e) => {
+    if (!tp || e.pointerId !== tp.id) return;
+    const p = view.toLocal(e), dt = performance.now() - tp.t, dx = p.x - tp.ox, dy = p.y - tp.oy;
+    if (dt < 260 && dy > CS * 2.5 && Math.abs(dy) > Math.abs(dx) * 1.5) hardDrop();
+    else if (dt < 260 && dy < -CS * 2 && Math.abs(dy) > Math.abs(dx) * 1.5) doHold();
+    else if (!tp.moved && dt < 320) rotate(1);
+    tp = null;
+  });
+
+  function update(dt) {
+    parts.update(dt);
+    if (state !== 'play') return;
+    if (clearing) { clearT -= dt; if (clearT <= 0) finishClear(); return; }
+    if (das.dir) {
+      const held = das.dir < 0 ? Kit.down('ArrowLeft', 'KeyA') : Kit.down('ArrowRight', 'KeyD');
+      if (!held) das.dir = 0;
+      else { das.t += dt; while (das.t >= DAS) { das.t -= ARR; userMove(das.dir); } }
+    }
+    const soft = Kit.down('ArrowDown', 'KeyS');
+    const interval = soft ? Math.min(gravity(), 0.035) : gravity();
+    if (!collides(cur.m, cur.x, cur.y + 1)) {
+      lockT = 0;
+      fallT += dt;
+      while (fallT >= interval) {
+        fallT -= interval;
+        if (move(0, 1)) { if (soft) score += 1; } else break;
+      }
+    } else {
+      fallT = 0;
+      lockT += dt;
+      if (lockT >= LOCK) lock();
+    }
+  }
+
+  /* ----- drawing ----- */
+  function block(x, y, s, color, alpha = 1) {
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = color;
+    Kit.rr(ctx, x + 1, y + 1, s - 2, s - 2, s * 0.15); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,.28)';
+    Kit.rr(ctx, x + 3, y + 3, s - 6, s * 0.22, s * 0.1); ctx.fill();
+    ctx.fillStyle = 'rgba(0,0,0,.18)';
+    ctx.fillRect(x + 3, y + s * 0.74, s - 6, s * 0.16);
+    ctx.globalAlpha = 1;
+  }
+  function mini(type, cx, cy, s) {
+    const m = SHAPES[type];
+    const cells = [];
+    m.forEach((r, i) => r.forEach((v, j) => v && cells.push([i, j])));
+    const minI = Math.min(...cells.map((c) => c[0])), maxI = Math.max(...cells.map((c) => c[0]));
+    const minJ = Math.min(...cells.map((c) => c[1])), maxJ = Math.max(...cells.map((c) => c[1]));
+    const w = (maxJ - minJ + 1) * s, h = (maxI - minI + 1) * s;
+    cells.forEach(([i, j]) => block(cx - w / 2 + (j - minJ) * s, cy - h / 2 + (i - minI) * s, s, COLORS[type]));
+  }
+  function panel(x, y, w, h) { ctx.fillStyle = '#1b2246'; Kit.rr(ctx, x, y, w, h, 12); ctx.fill(); }
+
+  function draw() {
+    ctx.fillStyle = '#0f1730'; ctx.fillRect(0, 0, W, H);
+    // board
+    ctx.fillStyle = '#121b3d'; Kit.rr(ctx, BX - 6, BY - 6, COLS * CS + 12, ROWS * CS + 12, 10); ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,.045)'; ctx.lineWidth = 1;
+    for (let c = 1; c < COLS; c++) { ctx.beginPath(); ctx.moveTo(BX + c * CS + 0.5, BY); ctx.lineTo(BX + c * CS + 0.5, BY + ROWS * CS); ctx.stroke(); }
+    for (let r = 1; r < ROWS; r++) { ctx.beginPath(); ctx.moveTo(BX, BY + r * CS + 0.5); ctx.lineTo(BX + COLS * CS, BY + r * CS + 0.5); ctx.stroke(); }
+    for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
+      const t = board[r][c];
+      if (!t) continue;
+      if (clearing && clearing.includes(r)) {
+        const flash = Math.floor(clearT * 20) % 2;
+        block(BX + c * CS, BY + r * CS, CS, flash ? '#ffffff' : COLORS[t]);
+      } else block(BX + c * CS, BY + r * CS, CS, COLORS[t]);
+    }
+    if (cur && !clearing && state !== 'over') {
+      const g = ghostY();
+      cur.m.forEach((row, i) => row.forEach((v, j) => {
+        if (!v) return;
+        if (g + i >= 0) {
+          ctx.strokeStyle = COLORS[cur.type]; ctx.globalAlpha = 0.45; ctx.lineWidth = 2;
+          Kit.rr(ctx, BX + (cur.x + j) * CS + 3, BY + (g + i) * CS + 3, CS - 6, CS - 6, 5); ctx.stroke();
+          ctx.globalAlpha = 1;
+        }
+        if (cur.y + i >= 0) {
+          const fade = lockT > 0 ? 1 - (lockT / LOCK) * 0.35 : 1;
+          block(BX + (cur.x + j) * CS, BY + (cur.y + i) * CS, CS, COLORS[cur.type], fade);
+        }
+      }));
+    }
+    if (state === 'over') { ctx.fillStyle = 'rgba(15,23,48,.55)'; ctx.fillRect(BX, BY, COLS * CS, ROWS * CS); }
+    parts.draw(ctx);
+
+    // side panel
+    Kit.text(ctx, 'NEXT', SX + 80, 30, { size: 13, color: '#9aa3d6' });
+    panel(SX, 42, 160, 204);
+    queue.slice(0, 3).forEach((t, i) => mini(t, SX + 80, 42 + 36 + i * 64, i === 0 ? 22 : 17));
+    Kit.text(ctx, 'HOLD', SX + 80, 262, { size: 13, color: '#9aa3d6' });
+    panel(HOLD_BOX.x, HOLD_BOX.y, HOLD_BOX.w, HOLD_BOX.h);
+    if (hold) { ctx.globalAlpha = canHold ? 1 : 0.4; mini(hold, SX + 80, HOLD_BOX.y + 42, 20); ctx.globalAlpha = 1; }
+    [['SCORE', score], ['LINES', lines], ['LEVEL', level], ['BEST', Math.max(best, score)]].forEach(([k, v], i) => {
+      const y = 376 + i * 58;
+      panel(SX, y, 160, 50);
+      Kit.text(ctx, k, SX + 14, y + 25, { align: 'left', size: 13, color: '#9aa3d6' });
+      Kit.text(ctx, String(v), SX + 146, y + 26, { align: 'right', size: 22, weight: 800 });
+    });
+  }
+
+  function menu() {
+    Kit.overlay({
+      title: 'Block Drop',
+      html: '<p>Rotate and drop the falling blocks. Fill a whole row to clear it. Clear 4 rows at once for a big bonus!</p>',
+      buttons: [{ label: 'Play', onClick: start }],
+      keys: '<kbd>←</kbd><kbd>→</kbd> move · <kbd>↑</kbd> rotate · <kbd>↓</kbd> soft drop<br><kbd>Space</kbd> hard drop · <kbd>C</kbd> hold · <kbd>P</kbd> pause<br>Touch: drag to move, tap to rotate, flick down to drop'
+    });
+  }
+
+  reset();
+  menu();
+  Kit.loop((dt) => { update(dt); draw(); }).start();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Type Rush</title>
+<link rel="stylesheet" href="../shared/kit.css">
+<style>#ghost { position: fixed; left: -1000px; top: 0; opacity: 0; width: 10px; }</style>
+</head>
+<body>
+<input id="ghost" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Type here">
+<script src="../shared/kit.js"></script>
+<script>
+(() => {
+  const ID = 'type-rush', W = 800, H = 600, GROUND = 540;
+  const view = Kit.canvas(W, H), ctx = view.ctx;
+  const parts = new Kit.Particles();
+  const WORDS = ('cat dog sun run sky red big fox owl map cup hat jam log net pen top van web zip ' +
+    'apple brave cloud dance eagle flame grape happy juice kites lemon magic night ocean piano quick river smile tiger unity vivid water young zebra ' +
+    'planet rocket garden castle dragon forest guitar island jungle kitten ladder marble number orange pencil rabbit silver turtle window yellow ' +
+    'balloon captain diamond explore fantasy giraffe harvest journey kingdom library mystery octopus penguin rainbow sunrise thunder volcano whisper ' +
+    'adventure butterfly chocolate dinosaur education fireworks grassland hurricane invisible jellyfish landscape marathon notebook pineapple question skeleton telescope universe waterfall').split(' ');
+  const ghost = document.getElementById('ghost');
+  let words, target, score, lives, level, spawnT, elapsed, typed, chars, combo, state = 'menu', best = Kit.getBest(ID), shake = 0, t = 0, buildings;
+
+  function reset() {
+    words = []; target = null; score = 0; lives = 3; level = 1; spawnT = 0.5; elapsed = 0; typed = 0; chars = 0; combo = 0; parts.clear();
+    buildings = [...Array(16)].map((_, i) => ({ x: i * 52, w: Kit.rand(34, 48), h: Kit.rand(20, 50), alive: true }));
+  }
+
+  function spawn() {
+    const maxLen = Math.min(10, 4 + level);
+    const pool = WORDS.filter((w) => w.length <= maxLen && !words.some((x) => x.text[0] === w[0]));
+    if (!pool.length) return;
+    const text = Kit.pick(pool);
+    ctx.font = '700 24px "Segoe UI", system-ui, sans-serif';
+    const w = ctx.measureText(text).width;
+    words.push({ text, x: Kit.rand(20 + w / 2, W - 20 - w / 2), y: -10, v: Kit.rand(28, 44) + level * 7, done: 0, w });
+  }
+
+  function key(ch) {
+    if (state !== 'play' || Kit.overlayOpen) return;
+    ch = ch.toLowerCase();
+    if (!/^[a-z]$/.test(ch)) return;
+    chars++;
+    if (!target) {
+      const cands = words.filter((w) => w.text[0] === ch).sort((a, b) => b.y - a.y);
+      target = cands[0] || null;
+      if (!target) { miss(); return; }
+    }
+    if (target.text[target.done] === ch) {
+      target.done++; typed++;
+      Kit.beep(600 + target.done * 30, 0.03, 'square', 0.025);
+      if (target.done === target.text.length) {
+        combo++;
+        score += target.text.length * 10 + Math.min(combo, 20) * 2;
+        parts.burst(target.x, target.y, 24, ['#22d3ee', '#a5f3fc', '#fde68a'], 220, 0.6, 4);
+        Kit.beep(880, 0.1, 'triangle', 0.05, 400);
+        words.splice(words.indexOf(target), 1);
+        target = null;
+      }
+    } else miss();
+  }
+  function miss() { combo = 0; Kit.beep(150, 0.06, 'sawtooth', 0.03); }
+
+  function update(dt) {
+    t += dt;
+    parts.update(dt);
+    shake = Math.max(0, shake - dt);
+    if (state !== 'play') return;
+    elapsed += dt;
+    level = 1 + Math.floor(elapsed / 20);
+    spawnT -= dt;
+    if (spawnT <= 0) { spawn(); spawnT = Math.max(0.7, 2.3 - level * 0.2) * Kit.rand(0.8, 1.2); }
+    for (const w of words) w.y += w.v * dt;
+    for (const w of words.slice()) {
+      if (w.y >= GROUND - 8) {
+        words.splice(words.indexOf(w), 1);
+        if (w === target) target = null;
+        lives--; shake = 0.4; combo = 0;
+        Kit.noise(0.35, 0.12);
+        parts.burst(w.x, GROUND, 30, ['#f97316', '#ef4444', '#facc15'], 240, 0.8, 5, 300);
+        const b = buildings.filter((k) => k.alive).sort((a, c) => Math.abs(a.x - w.x) - Math.abs(c.x - w.x))[0];
+        if (b) b.alive = false;
+        if (lives <= 0) return gameOver();
+      }
+    }
+  }
+
+  function gameOver() {
+    state = 'over';
+    ghost.blur();
+    const mins = Math.max(elapsed / 60, 1 / 60);
+    const wpm = Math.round(typed / 5 / mins);
+    const acc = chars ? Math.round((typed / chars) * 100) : 0;
+    const rec = Kit.submitBest(ID, score);
+    best = Kit.getBest(ID);
+    Kit.overlay({
+      title: 'City fallen!',
+      html: `<div class="big">${score}</div><p>${wpm} words per minute · ${acc}% accuracy</p><p>${rec ? '<span class="gold">New best score!</span>' : 'Best: ' + best}</p>`,
+      buttons: [{ label: 'Play again', onClick: begin }]
+    });
+  }
+  function begin() { reset(); state = 'play'; if (Kit.isTouch) ghost.focus(); }
+
+  function draw() {
+    ctx.save();
+    if (shake > 0) ctx.translate(Kit.rand(-7, 7) * shake, Kit.rand(-7, 7) * shake);
+    const g = ctx.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, '#0b1030'); g.addColorStop(1, '#2a1a4a');
+    ctx.fillStyle = g; ctx.fillRect(-10, -10, W + 20, H + 20);
+    for (let i = 0; i < 50; i++) { ctx.fillStyle = 'rgba(255,255,255,' + (0.2 + ((i * 37) % 10) / 20) + ')'; ctx.fillRect((i * 97) % W, (i * 53) % 400, 2, 2); }
+    for (const b of buildings || []) {
+      ctx.fillStyle = b.alive ? '#312e81' : '#1e1b3a';
+      const h = b.alive ? b.h + 30 : 10;
+      ctx.fillRect(b.x + 4, GROUND - h, b.w, h);
+      if (b.alive) { ctx.fillStyle = '#fde68a'; for (let y = GROUND - h + 8; y < GROUND - 6; y += 12) for (let x = b.x + 9; x < b.x + b.w - 2; x += 10) if ((x + y) % 3) ctx.fillRect(x, y, 4, 5); }
+    }
+    ctx.fillStyle = '#1e1b4b'; ctx.fillRect(0, GROUND, W, H - GROUND);
+    ctx.fillStyle = '#4338ca'; ctx.fillRect(0, GROUND, W, 3);
+    for (const w of words || []) {
+      const isT = w === target;
+      ctx.font = '700 24px "Segoe UI", system-ui, sans-serif';
+      const x0 = w.x - w.w / 2;
+      ctx.fillStyle = isT ? 'rgba(34,211,238,.18)' : 'rgba(10,15,38,.7)';
+      Kit.rr(ctx, x0 - 10, w.y - 18, w.w + 20, 34, 9); ctx.fill();
+      if (isT) { ctx.strokeStyle = '#22d3ee'; ctx.lineWidth = 2; ctx.stroke(); }
+      ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
+      const doneTxt = w.text.slice(0, w.done);
+      ctx.fillStyle = '#22d3ee'; ctx.fillText(doneTxt, x0, w.y);
+      ctx.fillStyle = '#fff'; ctx.fillText(w.text.slice(w.done), x0 + ctx.measureText(doneTxt).width, w.y);
+      ctx.fillStyle = 'rgba(249,115,22,.5)'; ctx.fillRect(w.x - 1, w.y + 17, 2, 6);
+    }
+    parts.draw(ctx);
+    Kit.text(ctx, 'SCORE ' + (score || 0), 18, 24, { align: 'left', size: 18 });
+    Kit.text(ctx, 'LEVEL ' + (level || 1), W / 2, 24, { size: 16, color: '#a5b4fc' });
+    for (let i = 0; i < (lives || 0); i++) Kit.text(ctx, '🛡', W - 24 - i * 28, 25, { size: 20 });
+    if (combo >= 3) Kit.text(ctx, combo + 'x combo!', W / 2, 52, { size: 15, color: '#fde68a' });
+    if (state === 'play' && Kit.isTouch && document.activeElement !== ghost) Kit.text(ctx, 'Tap to show keyboard', W / 2, H - 28, { size: 16, color: '#c7d2fe' });
+    ctx.restore();
+  }
+
+  window.addEventListener('keydown', (e) => {
+    if (e.target === ghost) return;
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.key.length === 1) key(e.key);
+    if (e.code === 'Escape' && state === 'play') { state = 'paused'; Kit.overlay({ title: 'Paused', buttons: [{ label: 'Resume', onClick: () => { state = 'play'; } }] }); }
+  });
+  ghost.addEventListener('input', () => { for (const ch of ghost.value) key(ch); ghost.value = ''; });
+  document.body.addEventListener('pointerdown', () => { if (state === 'play') ghost.focus(); });
+
+  reset();
+  Kit.overlay({
+    title: 'Type Rush',
+    html: '<p>Words are falling on the city! Type each word before it lands. Start typing a word\'s first letter to lock on to it. Longer words and combos score more.</p>',
+    buttons: [{ label: 'Start', onClick: begin }],
+    keys: 'Just type! · <kbd>Esc</kbd> pause'
+  });
+  Kit.loop((dt) => { update(dt); draw(); }).start();
+})();
+</script>
+</body>
+</html>

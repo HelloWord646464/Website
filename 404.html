@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Page not found</title>
+<style>
+  html, body { margin: 0; height: 100%; }
+  body { display: flex; align-items: center; justify-content: center; text-align: center; padding: 20px; background: #0b1020; color: #eef1ff;
+    font-family: "Segoe UI", system-ui, -apple-system, Roboto, Helvetica, Arial, sans-serif; }
+  h1 { font-size: 64px; margin: 0; }
+  p { color: #9aa3d6; margin: 8px 0 22px; }
+  a { display: inline-block; padding: 12px 22px; border-radius: 999px; background: linear-gradient(180deg, #8a6dff, #5b3df5); color: #fff; font-weight: 700; text-decoration: none; }
+</style>
+</head>
+<body>
+  <div>
+    <h1>404</h1>
+    <p>Oops — this page wandered off. The games are this way!</p>
+    <a id="home" href="/">Go to all games</a>
+  </div>
+  <script>
+    // On a github.io project site the site lives under /<repo-name>/
+    if (location.hostname.endsWith('github.io')) document.getElementById('home').href = '/' + location.pathname.split('/')[1] + '/';
+  </script>
+</body>
+</html>
