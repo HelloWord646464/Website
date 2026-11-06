@@ -32,7 +32,7 @@ GitHub Pages is free for **public** repositories.
 2. On GitHub, open the repo, then **Settings → General → Danger Zone → Change visibility → Public**.
 3. Go to **Settings → Pages**. Under **Build and deployment**, set **Source** to *Deploy from a branch*, choose **`main`** and **`/ (root)`**, then click **Save**.
 4. After a minute or two the site is live at:
-   **https://finleyinwood64-jpg.github.io/Website/**
+   **https://helloword646464.github.io/Website/**
 
 ### Option B: keep the repo private (Netlify or Cloudflare Pages)
 
